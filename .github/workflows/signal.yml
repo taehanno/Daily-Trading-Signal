@@ -1,14 +1,12 @@
 name: trading-signal
 
-# 무료 배포 옵션: GitHub Actions 크론으로 매시간 1회 분석 실행.
-# Render worker(유료) 대신 사용 가능. (스케줄은 UTC 기준, 약간의 지연 있을 수 있음)
+# 무료 배포 옵션: 매시간 1회 분석 실행.
+# 스케줄은 외부 트리거(cron-job.org)가 매시 정각(KST)에 workflow_dispatch 로 호출한다.
+# → GitHub 자체 schedule 이벤트(지연/누락 잦음) 대신 사용. 둘 다 켜면 중복 발송되므로 schedule 은 끔.
 on:
-  schedule:
-    # 매시간 1회. KST는 UTC+9(정시 오프셋)라 '분'은 UTC=KST 동일 → 매시 5분(KST x:05).
-    # ※ 정각 0분은 전 세계 작업이 몰려 GitHub이 가장 잘 지연/누락시키므로 5분으로 비켜 둠.
-    #    그래도 GitHub 크론은 best-effort라 수~십수 분 지연되거나 가끔 건너뛸 수 있음.
-    - cron: "5 * * * *"
-  workflow_dispatch: {}         # 수동 실행 버튼
+  workflow_dispatch: {}         # 외부 트리거(cron-job.org) + 수동 실행 버튼
+  # schedule:                   # (비활성) GitHub 네이티브 크론 — 필요시 백업용으로만 사용
+  #   - cron: "5 * * * *"
 
 # state.json 커밋백을 위해 쓰기 권한 필요 (on_change 스팸 방지용 상태 유지)
 permissions:
