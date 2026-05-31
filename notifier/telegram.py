@@ -6,7 +6,13 @@ Bot API: POST https://api.telegram.org/bot{TOKEN}/sendMessage
 - parse_mode=HTML 사용
 - DRY_RUN 이면 콘솔에만 출력
 """
+import html
 import requests
+
+
+def _esc(s):
+    """HTML parse_mode 충돌 방지용 이스케이프 (< > & 등). 구조 태그는 별도로 직접 작성."""
+    return html.escape(str(s), quote=False)
 
 
 def _fmt_price(p):
@@ -27,7 +33,7 @@ def _fmt_change(pct):
 def build_signal_message(symbol, sig, interval):
     """단건 시그널 알림 메시지(HTML)."""
     lines = [
-        f"<b>{sig['label_kr']}</b>  <code>{symbol}/KRW</code>",
+        f"<b>{sig['label_kr']}</b>  <code>{_esc(symbol)}/KRW</code>",
         f"가격 {_fmt_price(sig['price'])}  {_fmt_change(sig['change_pct'])}",
         f"스코어 <b>{sig['score']:+d}</b> · {interval} 봉",
     ]
@@ -42,7 +48,7 @@ def build_signal_message(symbol, sig, interval):
         lines.append("· " + " / ".join(metrics))
     if sig.get("reasons"):
         lines.append("")
-        lines.extend(f"• {r}" for r in sig["reasons"])
+        lines.extend(f"• {_esc(r)}" for r in sig["reasons"])
     return "\n".join(lines)
 
 
@@ -56,7 +62,7 @@ def build_summary_message(results, interval, top=10):
     lines.append(f"<b>🟢 매수 후보 {len(buys)}</b>")
     if buys:
         for s, r in buys[:top]:
-            lines.append(f"  {s}  <b>{r['score']:+d}</b>  {_fmt_change(r['change_pct'])}")
+            lines.append(f"  {_esc(s)}  <b>{r['score']:+d}</b>  {_fmt_change(r['change_pct'])}")
     else:
         lines.append("  없음")
 
@@ -64,7 +70,7 @@ def build_summary_message(results, interval, top=10):
     lines.append(f"<b>🔴 매도 후보 {len(sells)}</b>")
     if sells:
         for s, r in sells[:top]:
-            lines.append(f"  {s}  <b>{r['score']:+d}</b>  {_fmt_change(r['change_pct'])}")
+            lines.append(f"  {_esc(s)}  <b>{r['score']:+d}</b>  {_fmt_change(r['change_pct'])}")
     else:
         lines.append("  없음")
 
