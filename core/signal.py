@@ -65,6 +65,39 @@ def estimate_horizon(label, ext):
     return None
 
 
+def build_playbook(label, ext):
+    """
+    진입/보유 후 '행동 가이드' 생성. 시그널이 동일하면 보유, 어떤 변화면 청산인지 명시.
+    반환: {"hold": str|None, "exit": str} 또는 None.
+    ※ 손절선은 일봉 종가 기준(장중 흔들림 무시). 매도계열은 이미 보유 중인 사람 기준 행동.
+    """
+    if label == "EARLY_BUY":
+        # 추세 초입 진입 → 단기선(EMA20) 깨질 때까지 며칠 묵어두기. 넓은 손절.
+        return {
+            "hold": "🟢 매수계열·정배열(확정/유지)이 이어지면 보유 — 선제→확정 전환은 추세가 진행 중이란 신호",
+            "exit": "🔴 매도(EMA20>EMA5)·적극매도(역배열)로 바뀌면 청산 / 일봉 종가가 EMA20 아래로 마감하면 안전 손절",
+        }
+    if label == "CONFIRMED_BUY":
+        # 늦은 진입 → 짧게, 타이트한 손절(EMA5). 과열 클수록 즉시 분할.
+        urgent = " · 과열 큼 → 분할 익절부터" if ext > 0.20 else ""
+        return {
+            "hold": "정배열이 유지되는 동안만 짧게 보유" + urgent,
+            "exit": "🔴 매도·적극매도 전환 / EMA5 꺾임·일봉 종가 EMA5 이탈 시 즉시 청산",
+        }
+    if label == "EARLY_SELL":
+        # 단기선 이탈 = 1차 익절 신호 (보유자 대상)
+        return {
+            "hold": None,
+            "exit": "보유 중이면 1차 익절(분할 매도) · 적극매도(역배열)로 더 악화되면 전량 청산",
+        }
+    if label == "EXIT":
+        return {
+            "hold": None,
+            "exit": "보유 중이면 전량 청산 — 추세 종료(EMA60>20>5 역배열 전환)",
+        }
+    return None
+
+
 def analyze(candles, cfg):
     """
     candles: bithumb.get_candles() (시간 오름차순). 일봉 권장.
@@ -138,6 +171,7 @@ def analyze(candles, cfg):
         reasons.append(f"최근 {cfg.BASE_WINDOW}봉 중 {base_below * 100:.0f}% EMA60 아래(바닥)")
 
     horizon = estimate_horizon(label, ext)
+    playbook = build_playbook(label, ext)
     return {
         "label": label,
         "label_kr": LABELS[label],
@@ -151,6 +185,7 @@ def analyze(candles, cfg):
         "slope_fast": s5,
         "base_below": base_below,
         "horizon": horizon,           # (분류, 설명) or None
+        "playbook": playbook,         # {"hold", "exit"} or None — 유지/청산 행동 가이드
         "reasons": reasons,
         "is_actionable": label in BUY_SIDE or label in SELL_SIDE,
     }

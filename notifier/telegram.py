@@ -41,6 +41,13 @@ def build_signal_message(symbol, sig, interval):
     horizon = sig.get("horizon")
     if horizon:
         lines.append(f"⏳ <b>예상 보유: {_esc(horizon[0])}</b> · {_esc(horizon[1])}")
+    # 행동 가이드 — 유지/청산 조건
+    pb = sig.get("playbook")
+    if pb:
+        if pb.get("hold"):
+            lines.append(f"✅ <b>유지</b>: {_esc(pb['hold'])}")
+        if pb.get("exit"):
+            lines.append(f"🚪 <b>청산</b>: {_esc(pb['exit'])}")
     if sig.get("reasons"):
         lines.append("")
         lines.extend(f"• {_esc(r)}" for r in sig["reasons"])
@@ -115,6 +122,29 @@ def build_status_message(results, since, prev_signals, interval, now_str):
         return (f"  <code>{_esc(sym)}</code> {_esc(_short(sig['label_kr']))} "
                 f"{_fmt_change(sig['change_pct'])}{tail}  {_mark(sym, sig)}")
 
+    def _buy_block(sym, sig):
+        """매수 후보: 헤더 + 보유기간 + 유지/청산 가이드(2~3줄)."""
+        out = [(f"  <code>{_esc(sym)}</code> {_esc(_short(sig['label_kr']))} "
+                f"{_fmt_change(sig['change_pct'])}  {_mark(sym, sig)}")]
+        h = sig.get("horizon")
+        if h:
+            out.append(f"    ⏳ {_esc(h[0])} · {_esc(h[1])}")
+        pb = sig.get("playbook")
+        if pb:
+            if pb.get("hold"):
+                out.append(f"    ✅ 유지: {_esc(pb['hold'])}")
+            if pb.get("exit"):
+                out.append(f"    🚪 청산: {_esc(pb['exit'])}")
+        return "\n".join(out)
+
+    def _sell_block(sym, sig):
+        """매도 후보: 헤더 + 행동(보유자 기준)."""
+        head = _row(sym, sig)
+        pb = sig.get("playbook")
+        if pb and pb.get("exit"):
+            return head + f"\n    🚪 {_esc(pb['exit'])}"
+        return head
+
     buys = [(s, r) for s, r in results if r["label"] in BUY_SIDE]
     sells = [(s, r) for s, r in results if r["label"] in SELL_SIDE]
     watches = [(s, r) for s, r in results if r["label"] == "WATCH"]
@@ -128,11 +158,11 @@ def build_status_message(results, since, prev_signals, interval, now_str):
     lines = [f"<b>📡 시그널 현황</b>  {_esc(now_str)} ({interval}봉)", ""]
 
     lines.append(f"<b>🟢 매수 후보 {len(buys)}</b>")
-    lines.extend(_row(s, r, with_horizon=True) for s, r in buys) if buys else lines.append("  없음")
+    lines.extend(_buy_block(s, r) for s, r in buys) if buys else lines.append("  없음")
 
     lines.append("")
     lines.append(f"<b>🔴 매도 후보 {len(sells)}</b>")
-    lines.extend(_row(s, r) for s, r in sells) if sells else lines.append("  없음")
+    lines.extend(_sell_block(s, r) for s, r in sells) if sells else lines.append("  없음")
 
     if watches:
         lines.append("")
@@ -149,6 +179,8 @@ def build_status_message(results, since, prev_signals, interval, now_str):
         lines.append("<b>이번 시간 변화 없음</b> — 모든 종목 직전과 동일")
     else:
         lines.append(f"<b>변화 요약</b>: 신규 {n_new} · 변화 {n_chg} · 동일 {n_same}")
+    if buys or sells:
+        lines.append("<i>📖 같은 시그널 유지 = 보유 / 🔴 매도·적극매도로 바뀌면 = 청산</i>")
     lines.append("<i>※ 투자 참고용 시그널이며 투자 책임은 본인에게 있습니다.</i>")
     return "\n".join(lines)
 
