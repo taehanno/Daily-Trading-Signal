@@ -79,7 +79,7 @@ def run_cycle(cfg, state):
     # --- actionable 시그널 알림 ---
     sent = 0
     for sym, sig in results:
-        actionable = sig["is_actionable"] or (cfg.ALERT_ON_HOLD and sig["label"] == "HOLD")
+        actionable = sig["is_actionable"] or (cfg.ALERT_ON_WATCH and sig["label"] == "WATCH")
         if not actionable:
             continue
         prev = state["last_signal"].get(sym)

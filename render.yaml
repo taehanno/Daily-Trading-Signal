@@ -14,11 +14,11 @@ services:
       - key: TELEGRAM_CHAT_ID
         sync: false
       - key: CANDLE_INTERVAL
-        value: "1h"
+        value: "24h"
       - key: CHECK_INTERVAL_MIN
         value: "60"
       - key: TOP_N
-        value: "15"
+        value: "20"
       - key: DAILY_SUMMARY_HOUR
         value: "9"
       - key: ALERT_MODE
