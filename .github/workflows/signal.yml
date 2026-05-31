@@ -4,9 +4,10 @@ name: trading-signal
 # Render worker(유료) 대신 사용 가능. (스케줄은 UTC 기준, 약간의 지연 있을 수 있음)
 on:
   schedule:
-    # KST는 UTC+9(정시 오프셋) → UTC 매시 0분 = KST 매시 0분(정각). 09:00,10:00...
-    # ※ GitHub 크론은 부하 시 수~십수 분 지연될 수 있음(정확한 초단위 보장 아님).
-    - cron: "0 * * * *"
+    # 매시간 1회. KST는 UTC+9(정시 오프셋)라 '분'은 UTC=KST 동일 → 매시 5분(KST x:05).
+    # ※ 정각 0분은 전 세계 작업이 몰려 GitHub이 가장 잘 지연/누락시키므로 5분으로 비켜 둠.
+    #    그래도 GitHub 크론은 best-effort라 수~십수 분 지연되거나 가끔 건너뛸 수 있음.
+    - cron: "5 * * * *"
   workflow_dispatch: {}         # 수동 실행 버튼
 
 # state.json 커밋백을 위해 쓰기 권한 필요 (on_change 스팸 방지용 상태 유지)
@@ -37,8 +38,9 @@ jobs:
           ONESHOT: "true"
           CANDLE_INTERVAL: "24h"     # 일봉 EMA(5/20/60) 정배열 전략
           TOP_N: "20"
-          DAILY_SUMMARY_HOUR: "9"
-          ALERT_MODE: "on_change"
+          HOURLY_STATUS: "true"      # 매시간 전 종목 현황 1건 발송(변화 없어도 "동일"로 표기)
+          DAILY_SUMMARY_HOUR: "-1"   # 매시간 현황이 전체를 커버하므로 별도 9시 요약은 끔(-1)
+          ALERT_MODE: "on_change"    # HOURLY_STATUS=true면 단건 알림은 비활성(다이제스트로 일원화)
           # ALERT_ON_WATCH: "true"   # 전조(관찰) 시그널까지 받으려면 주석 해제
         run: python main.py
 

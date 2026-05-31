@@ -32,9 +32,14 @@ KST = timezone(timedelta(hours=9))
 def load_state(path):
     try:
         with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+            state = json.load(f)
     except (OSError, ValueError):
-        return {"last_signal": {}, "last_summary_date": None}
+        state = {}
+    # 구버전 state.json 호환: 누락 키 보강
+    state.setdefault("last_signal", {})
+    state.setdefault("last_summary_date", None)
+    state.setdefault("signal_since", {})  # {symbol: "YYYY-MM-DD HH:MM"} 현재 시그널 발생 시각
+    return state
 
 
 def save_state(path, state):
@@ -76,23 +81,48 @@ def run_cycle(cfg, state):
 
     results.sort(key=lambda x: x[1]["score"], reverse=True)
 
-    # --- actionable 시그널 알림 ---
-    sent = 0
+    now = datetime.now(KST)
+    now_str = now.strftime("%Y-%m-%d %H:%M")
+    # 직전 시그널 스냅샷(상태 갱신 전에 떠서 변화 판정에 사용)
+    prev_signals = dict(state["last_signal"])
+    since = state["signal_since"]
+
+    # 시그널이 '바뀐' 종목은 발생 시각을 지금으로 기록 (이후 동일하면 유지)
     for sym, sig in results:
-        actionable = sig["is_actionable"] or (cfg.ALERT_ON_WATCH and sig["label"] == "WATCH")
-        if not actionable:
-            continue
-        prev = state["last_signal"].get(sym)
-        if cfg.ALERT_MODE == "on_change" and prev == sig["label"]:
-            continue  # 시그널 변화 없음 → 스킵
-        msg = telegram.build_signal_message(sym, sig, cfg.CANDLE_INTERVAL)
-        if telegram.send(cfg, msg):
-            sent += 1
-        bithumb.polite_sleep(0.1)
+        if prev_signals.get(sym) != sig["label"]:
+            since[sym] = now_str
+
+    # --- actionable 단건 알림 (HOURLY_STATUS 모드에서는 현황 다이제스트로 일원화하므로 생략) ---
+    sent = 0
+    if not cfg.HOURLY_STATUS:
+        for sym, sig in results:
+            actionable = sig["is_actionable"] or (cfg.ALERT_ON_WATCH and sig["label"] == "WATCH")
+            if not actionable:
+                continue
+            if cfg.ALERT_MODE == "on_change" and prev_signals.get(sym) == sig["label"]:
+                continue  # 시그널 변화 없음 → 스킵
+            msg = telegram.build_signal_message(sym, sig, cfg.CANDLE_INTERVAL)
+            if telegram.send(cfg, msg):
+                sent += 1
+            bithumb.polite_sleep(0.1)
 
     # 모든 코인의 최신 시그널 상태 갱신
     for sym, sig in results:
         state["last_signal"][sym] = sig["label"]
+    # 더 이상 대상이 아닌(top-N 이탈) 종목의 발생시각 정리 — 상태 비대화 방지
+    live = {sym for sym, _ in results}
+    for sym in [s for s in since if s not in live]:
+        since.pop(sym, None)
+
+    # --- 매시간 전 종목 현황 다이제스트 (변화 없어도 항상 1건) ---
+    if cfg.HOURLY_STATUS:
+        if results:
+            msg = telegram.build_status_message(
+                results, since, prev_signals, cfg.CANDLE_INTERVAL, now_str)
+        else:
+            msg = f"📡 시그널 현황 {now_str} — 분석 대상/데이터 없음(거래소 조회 실패 가능)"
+        if telegram.send(cfg, msg):
+            sent += 1
 
     print(f"  → 알림 {sent}건 발송")
     return results

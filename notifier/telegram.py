@@ -82,6 +82,77 @@ def build_summary_message(results, interval, top=10):
     return "\n".join(lines)
 
 
+def _short(label_kr):
+    """이모지 뒤 핵심어만 (예: "🟢 선제 매수 (정배열 임박)" → "선제 매수")."""
+    body = label_kr.split(" ", 1)[1] if " " in label_kr else label_kr
+    return body.split(" (")[0]
+
+
+def build_status_message(results, since, prev_signals, interval, now_str):
+    """매시간 전 종목 현황 다이제스트(HTML).
+
+    - results: [(symbol, sig)] 스코어 내림차순
+    - since: {symbol: "YYYY-MM-DD HH:MM"} 현재 시그널이 '발생'한 시각
+    - prev_signals: 직전 실행의 {symbol: label} (변화 판정용)
+    - now_str: 현재 시각 문자열(KST)
+    변화가 없어도 항상 1건을 만든다. (각 종목의 발생 시각과 동일 여부 표기)
+    """
+    from core.signal import BUY_SIDE, SELL_SIDE, LABELS
+
+    def _mark(sym, sig):
+        """변화 표식. 신규/방금 변화/동일 중 하나."""
+        prev = prev_signals.get(sym)
+        if prev is None:
+            return "🆕 신규 포착"
+        if prev != sig["label"]:
+            return f"🔄 방금 변화: {_esc(_short(LABELS.get(prev, prev)))} → {_esc(_short(sig['label_kr']))}"
+        s = since.get(sym)
+        return f"· 발생 {_esc(s)} 이후 동일" if s else "· 직전과 동일"
+
+    def _row(sym, sig, with_horizon=False):
+        h = sig.get("horizon")
+        tail = f" · ⏳{_esc(h[0])}" if (with_horizon and h) else ""
+        return (f"  <code>{_esc(sym)}</code> {_esc(_short(sig['label_kr']))} "
+                f"{_fmt_change(sig['change_pct'])}{tail}  {_mark(sym, sig)}")
+
+    buys = [(s, r) for s, r in results if r["label"] in BUY_SIDE]
+    sells = [(s, r) for s, r in results if r["label"] in SELL_SIDE]
+    watches = [(s, r) for s, r in results if r["label"] == "WATCH"]
+    holds = [(s, r) for s, r in results if r["label"] == "HOLD"]
+
+    n_new = sum(1 for s, _ in results if prev_signals.get(s) is None)
+    n_chg = sum(1 for s, r in results
+                if prev_signals.get(s) is not None and prev_signals.get(s) != r["label"])
+    n_same = len(results) - n_new - n_chg
+
+    lines = [f"<b>📡 시그널 현황</b>  {_esc(now_str)} ({interval}봉)", ""]
+
+    lines.append(f"<b>🟢 매수 후보 {len(buys)}</b>")
+    lines.extend(_row(s, r, with_horizon=True) for s, r in buys) if buys else lines.append("  없음")
+
+    lines.append("")
+    lines.append(f"<b>🔴 매도 후보 {len(sells)}</b>")
+    lines.extend(_row(s, r) for s, r in sells) if sells else lines.append("  없음")
+
+    if watches:
+        lines.append("")
+        lines.append(f"<b>👀 관찰 {len(watches)}</b>")
+        lines.extend(_row(s, r) for s, r in watches)
+
+    if holds:
+        lines.append("")
+        lines.append(f"<b>⚪ 관망 {len(holds)}</b>")
+        lines.append("  " + ", ".join(f"<code>{_esc(s)}</code>" for s, _ in holds))
+
+    lines.append("")
+    if n_new == 0 and n_chg == 0:
+        lines.append("<b>이번 시간 변화 없음</b> — 모든 종목 직전과 동일")
+    else:
+        lines.append(f"<b>변화 요약</b>: 신규 {n_new} · 변화 {n_chg} · 동일 {n_same}")
+    lines.append("<i>※ 투자 참고용 시그널이며 투자 책임은 본인에게 있습니다.</i>")
+    return "\n".join(lines)
+
+
 def send(cfg, text: str) -> bool:
     """텔레그램 발송. 성공 여부 반환."""
     if cfg.DRY_RUN:

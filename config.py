@@ -68,6 +68,11 @@ class Config:
     # on_change: 직전 시그널과 달라졌을 때만 알림 (스팸 방지). always: 매 주기 알림.
     ALERT_MODE = _get("ALERT_MODE", "on_change")
 
+    # 매 실행마다 전 종목 '현황' 다이제스트를 무조건 1건 발송할지.
+    # true면 변화가 없어도 "직전과 동일"로 표시하고, 각 시그널의 발생 시각을 함께 보여줌.
+    # (이 모드에서는 개별 on_change 단건 알림은 끄고 현황 다이제스트로 일원화)
+    HOURLY_STATUS = _get("HOURLY_STATUS", "false").lower() == "true"
+
     # --- 운영 ---
     STATE_FILE = _get("STATE_FILE", "state.json")
     REQUEST_SLEEP = _get_float("REQUEST_SLEEP", 0.15)  # API 호출 간 간격(초, rate-limit 보호)
