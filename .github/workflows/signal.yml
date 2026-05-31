@@ -40,11 +40,15 @@ jobs:
         run: python main.py
 
       - name: Persist state (on_change 유지)
+        # state.json 은 .gitignore 대상이라 -f 로 강제 스테이징 후 staged diff 로 변경 판정
         run: |
-          if [ -n "$(git status --porcelain state.json)" ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add -f state.json
+          [ -f state.json ] || exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f state.json
+          if ! git diff --cached --quiet; then
             git commit -m "chore: update signal state [skip ci]"
             git push
+          else
+            echo "state 변화 없음 — 커밋 생략"
           fi
