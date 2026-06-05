@@ -85,8 +85,12 @@ class Config:
     RSI_BUY_MIN = _get_float("RSI_BUY_MIN", 50.0)
     RSI_BUY_MAX = _get_float("RSI_BUY_MAX", 72.0)
     RSI_OVERHEAT = _get_float("RSI_OVERHEAT", 80.0)       # 청산(블로우오프) 기준
-    # 목표 수익(분할 익절 기준). 손절은 봉저점/VWAP 중 가까운 쪽(엔진 산정)
+    # 목표 수익(분할 익절 기준).
     TARGET_PCT = _get_float("TARGET_PCT", 0.025)          # +2.5%
+    # 손절 방식: ATR배수>0 이면 ATR, 아니면 STOP_PCT>0 이면 고정%, 둘 다 0이면 봉저점/VWAP
+    STOP_PCT = _get_float("STOP_PCT", 0.0)                # 진입가 대비 고정 손절폭(예 0.012=1.2%)
+    STOP_ATR_MULT = _get_float("STOP_ATR_MULT", 0.0)      # ATR 배수 손절(예 1.5)
+    STOP_ATR_PERIOD = _get_int("STOP_ATR_PERIOD", 14)
     # 거래 집중 시간대(KST 정수 시) — 이 시간대엔 RVOL 트리거 완화
     KEY_HOURS = set(_get_int_list("KEY_HOURS", [8, 9, 10, 20, 21, 22]))
     KEY_HOUR_RELAX = _get_float("KEY_HOUR_RELAX", 0.5)    # 집중 시간대 트리거 인하폭

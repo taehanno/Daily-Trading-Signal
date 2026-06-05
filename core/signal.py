@@ -188,11 +188,18 @@ def analyze(candles, cfg):
     if label == "BUY_IGNITION":
         target = price * (1 + cfg.TARGET_PCT)
         target_pct = cfg.TARGET_PCT
-        # 손절: 점화 봉 저점과 VWAP 중 더 가까운(높은) 쪽 — 단타라 타이트하게
-        candidates = [cur["low"]]
-        if vwap is not None:
-            candidates.append(vwap)
-        stop = max(candidates)
+        # 손절 방식(우선순위): ATR 배수 > 고정% > 봉저점·VWAP(기본)
+        if getattr(cfg, "STOP_ATR_MULT", 0) > 0:
+            a = ind.atr(ev, getattr(cfg, "STOP_ATR_PERIOD", 14))
+            stop = price - cfg.STOP_ATR_MULT * a if a else cur["low"]
+        elif getattr(cfg, "STOP_PCT", 0) > 0:
+            stop = price * (1 - cfg.STOP_PCT)
+        else:
+            # 점화 봉 저점과 VWAP 중 더 가까운(높은) 쪽 — 단타라 타이트하게
+            candidates = [cur["low"]]
+            if vwap is not None:
+                candidates.append(vwap)
+            stop = max(candidates)
         if stop >= price:  # 안전장치
             stop = cur["low"]
 
