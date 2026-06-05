@@ -27,6 +27,19 @@ def _kst_date_str(ts_ms):
     return datetime.fromtimestamp(ts_ms / 1000, KST).date().isoformat()
 
 
+def _bar_minutes(interval):
+    """'5m'→5, '1h'→60. 파싱 실패 시 5."""
+    try:
+        s = interval.strip().lower()
+        if s.endswith("m"):
+            return int(s[:-1])
+        if s.endswith("h"):
+            return int(s[:-1]) * 60
+        return int("".join(ch for ch in s if ch.isdigit()) or 5)
+    except (ValueError, AttributeError):
+        return 5
+
+
 def _init(state):
     pap = state.setdefault("paper", {})
     pap.setdefault("open", {})
@@ -118,10 +131,13 @@ def update(cfg, state, sigs_by_sym, market, now_str):
             net = (price - pos["entry"]) / pos["entry"] - cfg.PAPER_FEE
             _record(pap, sym, pos, price, net, reason, now_str)
             del open_pos[sym]
+            bar_min = _bar_minutes(cfg.CANDLE_INTERVAL)
             events.append({
                 "type": "exit", "sym": sym, "net": net, "reason": reason,
                 "entry": pos["entry"], "exit": price, "in": pos["entry_ts"],
-                "out": now_str, "scorecard": scorecard(pap),
+                "out": now_str, "bars": pos.get("bars", 0),
+                "hold_min": pos.get("bars", 0) * bar_min,
+                "scorecard": scorecard(pap),
             })
 
     # 2) 신규 진입(BUY_IGNITION, 이미 보유 중이 아닌 종목)
@@ -137,6 +153,18 @@ def update(cfg, state, sigs_by_sym, market, now_str):
             "stop": sig["stop"], "target": sig["target"], "bars": 0,
             "rvol": sig.get("rvol"), "max_buy_krw": sig.get("max_buy_krw"),
         }
-        events.append({"type": "entry", "sym": sym, "sig": sig})
+        # '몇 분 뒤 Exit'(시간손절 시각) 산정 — 스캘핑 청산 클락
+        bar_min = _bar_minutes(cfg.CANDLE_INTERVAL)
+        max_min = cfg.PAPER_MAX_HOLD_BARS * bar_min
+        exit_clock = None
+        try:
+            t = datetime.strptime(now_str, "%Y-%m-%d %H:%M") + timedelta(minutes=max_min)
+            exit_clock = t.strftime("%H:%M")
+        except ValueError:
+            pass
+        events.append({
+            "type": "entry", "sym": sym, "sig": sig,
+            "max_min": max_min, "exit_clock": exit_clock,
+        })
 
     return events

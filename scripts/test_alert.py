@@ -78,7 +78,29 @@ def main():
     since = {"BTC": "2026-06-05 09:00"}
     prev = {"BTC": "WATCH_VOL", "SOL": "HOLD", "XRP": "BUY_IGNITION"}
     msg = telegram.build_status_message(results, since, prev, interval, "[테스트] 합성 시그널")
-    ok = telegram.send(Config, "🧪 <b>현황 다이제스트 테스트</b>\n" + msg)
+    telegram.send(Config, "🧪 <b>현황 다이제스트 테스트</b>\n" + msg)
+
+    # 3) 페이퍼 진입/청산/일일요약
+    entry_ev = {
+        "type": "entry", "sym": "BTC", "sig": buy,
+        "max_min": Config.PAPER_MAX_HOLD_BARS * 5, "exit_clock": "11:00",
+    }
+    telegram.send(Config, "🧪 <b>페이퍼 진입 테스트</b>\n"
+                  + telegram.build_paper_entry(entry_ev, interval))
+    exit_ev = {
+        "sym": "BTC", "net": 0.024, "reason": "target", "entry": 95000000,
+        "exit": 97375000, "in": "2026-06-05 09:00", "out": "2026-06-05 09:25",
+        "hold_min": 25, "scorecard": {"n": 12, "wr": 33.3, "exp": -0.12, "pf": 0.7, "total": -1.4},
+    }
+    telegram.send(Config, "🧪 <b>페이퍼 청산 테스트</b>\n" + telegram.build_paper_exit(exit_ev))
+    pap = {
+        "open": {"XLM": {"entry": 320000, "entry_ts": "2026-06-05 13:00", "max_buy_krw": 320_000_000}},
+        "stats": {"n": 12, "wins": 4, "sum": -0.014, "gp": 0.06, "gl": 0.074},
+        "recent": [{"sym": "BTC", "net": 0.024, "reason": "target", "out": "2026-06-05 09:25"},
+                   {"sym": "ENA", "net": -0.016, "reason": "stop", "out": "2026-06-05 11:10"}],
+    }
+    ok = telegram.send(Config, "🧪 <b>페이퍼 일일요약 테스트</b>\n"
+                       + telegram.build_paper_summary(pap, "2026-06-05 09:00", interval))
     print("발송 성공" if ok else "발송 실패")
 
 

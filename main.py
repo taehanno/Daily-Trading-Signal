@@ -124,7 +124,7 @@ def run_cycle(cfg, state):
         events = paper_engine.update(cfg, state, sigs_by_sym, market, now_str)
         for ev in events:
             if ev["type"] == "entry":
-                msg = telegram.build_paper_entry(ev["sym"], ev["sig"], cfg.CANDLE_INTERVAL)
+                msg = telegram.build_paper_entry(ev, cfg.CANDLE_INTERVAL)
             else:
                 msg = telegram.build_paper_exit(ev)
             if telegram.send(cfg, msg):
@@ -165,6 +165,22 @@ def run_cycle(cfg, state):
     return results
 
 
+# ---------- 페이퍼 일일 요약 ----------
+def maybe_send_paper_summary(cfg, state, now):
+    """PAPER_SUMMARY_HOUR(KST)에 하루 한 번 페이퍼 누적 성적표 발송."""
+    if not cfg.PAPER_TRADING or cfg.PAPER_SUMMARY_HOUR < 0:
+        return
+    pap = state.get("paper")
+    if not pap:
+        return
+    today = now.strftime("%Y-%m-%d")
+    if now.hour == cfg.PAPER_SUMMARY_HOUR and pap.get("last_summary_date") != today:
+        msg = telegram.build_paper_summary(pap, now.strftime("%Y-%m-%d %H:%M"), cfg.CANDLE_INTERVAL)
+        if telegram.send(cfg, msg):
+            pap["last_summary_date"] = today
+            print("  → 페이퍼 일일 요약 발송")
+
+
 # ---------- 일일 요약 ----------
 def maybe_send_summary(cfg, state, results):
     if cfg.DAILY_SUMMARY_HOUR < 0:
@@ -197,6 +213,7 @@ def main():
         try:
             results = run_cycle(cfg, state)
             maybe_send_summary(cfg, state, results)
+            maybe_send_paper_summary(cfg, state, datetime.now(KST))
             save_state(cfg.STATE_FILE, state)
         except Exception:
             print("[cycle] 예기치 못한 오류:\n" + traceback.format_exc())

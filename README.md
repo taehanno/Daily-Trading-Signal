@@ -157,6 +157,7 @@ TELEGRAM_BOT_TOKEN=토큰 TELEGRAM_CHAT_ID=아이디 ONESHOT=true python main.py
 | `PAPER_TRADING` | `true` | 가상매매 기록 모드(실돈 X). 진입/청산+누적 성적표 |
 | `PAPER_FEE` | `0.001` | 페이퍼 왕복 수수료 가정(0.1%) |
 | `PAPER_MAX_HOLD_BARS` | `24` | 페이퍼 시간손절(봉, 24=2시간) |
+| `PAPER_SUMMARY_HOUR` | `9` | 페이퍼 일일 요약 발송 시각(KST). `-1`이면 끔 |
 | `DRY_RUN` | `false` | true면 콘솔 출력(발송 안 함) |
 | `ONESHOT` | `false` | true면 1회 실행 후 종료 |
 

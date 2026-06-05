@@ -108,6 +108,7 @@ class Config:
     PAPER_TRADING = _get("PAPER_TRADING", "true").lower() == "true"
     PAPER_FEE = _get_float("PAPER_FEE", 0.001)            # 왕복 수수료 가정(0.1%)
     PAPER_MAX_HOLD_BARS = _get_int("PAPER_MAX_HOLD_BARS", 24)  # 시간손절(봉, 24=2시간)
+    PAPER_SUMMARY_HOUR = _get_int("PAPER_SUMMARY_HOUR", 9)     # 페이퍼 일일요약 발송 시각(KST, -1이면 끔)
 
     # 매수계열(EARLY_BUY/CONFIRMED_BUY) + 매도계열(EARLY_SELL/EXIT)만 알림. HOLD 무시.
     # on_change: 직전 시그널과 달라졌을 때만 알림 (스팸 방지). always: 매 주기 알림.

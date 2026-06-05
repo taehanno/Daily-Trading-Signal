@@ -112,19 +112,28 @@ def _scorecard_line(sc):
             f"기대값 {sc['exp']:+.2f}% · PF {pf} · 누적 {sc['total']:+.1f}%")
 
 
-def build_paper_entry(symbol, sig, interval):
-    """페이퍼(가상) 진입 기록 메시지."""
+def build_paper_entry(ev, interval):
+    """페이퍼(가상) 진입 기록 메시지 — 스캘핑 핵심: 자산·최대 구매 금액·청산 시각."""
+    sym, sig = ev["sym"], ev["sig"]
     lines = [
-        f"📗 <b>[페이퍼] 가상 진입</b>  <code>{_esc(symbol)}/KRW</code>",
-        f"진입 {_fmt_price(sig['price'])}  ({interval}봉) · RVOL {sig.get('rvol', 0):.1f}배 · RSI {sig.get('rsi', 0):.0f}",
+        f"📗 <b>[페이퍼] 가상 진입</b>  💎 <b>{_esc(sym)}</b> <code>/KRW</code>",
+        f"진입가 {_fmt_price(sig['price'])}  ({interval}봉) · RVOL {sig.get('rvol', 0):.1f}배 · RSI {sig.get('rsi', 0):.0f}",
     ]
+    # 최대 구매 금액(호가 유동성 기반)
+    mb = sig.get("max_buy_krw")
+    if mb is not None:
+        warn = " ⚠️호가 얇음·소액만" if sig.get("thin_book") else ""
+        lines.append(f"💰 <b>최대 구매 금액 ≈ {_fmt_amount(mb)}</b>{warn}")
+    # 목표/손절
     if sig.get("target") is not None:
         tp = sig.get("target_pct") or 0
         lines.append(f"🎯 목표 {_fmt_price(sig['target'])} (+{tp * 100:.1f}%)  "
                      f"🛑 손절 {_fmt_price(sig['stop'])}")
-    liq = _liquidity_line(sig)
-    if liq:
-        lines.append(liq)
+    # 몇 분 뒤 Exit — 목표 도달 시 즉시, 미도달 시 시간손절 클락
+    mm, clock = ev.get("max_min"), ev.get("exit_clock")
+    if mm:
+        tail = f" → 미도달 시 <b>{mm}분 뒤({clock}) 청산</b>" if clock else f" → 최대 {mm}분 보유"
+        lines.append(f"⏱ <b>Exit</b>: 목표/손절 도달 시 즉시{tail}")
     lines.append("<i>ℹ️ 정보용 가상 매매 기록 — 실제 주문이 아닙니다.</i>")
     return "\n".join(lines)
 
@@ -133,12 +142,55 @@ def build_paper_exit(ev):
     """페이퍼(가상) 청산 기록 메시지 + 누적 성적표."""
     sym, net = ev["sym"], ev["net"]
     mark = "🟢" if net > 0 else "🔴"
+    hold = ev.get("hold_min")
+    hold_txt = f" · 보유 {hold}분" if hold else ""
     lines = [
-        f"📕 <b>[페이퍼] 가상 청산</b>  <code>{_esc(sym)}/KRW</code>  {mark}",
-        f"사유 {_PAPER_REASON.get(ev['reason'], ev['reason'])} · 손익 <b>{net * 100:+.2f}%</b> (수수료 반영)",
+        f"📕 <b>[페이퍼] 가상 청산</b>  💎 <b>{_esc(sym)}</b> <code>/KRW</code>  {mark}",
+        f"사유 {_PAPER_REASON.get(ev['reason'], ev['reason'])} · 손익 <b>{net * 100:+.2f}%</b> (수수료 반영){hold_txt}",
         f"진입 {_esc(ev['in'])} → 청산 {_esc(ev['out'])}",
         _scorecard_line(ev["scorecard"]),
     ]
+    return "\n".join(lines)
+
+
+def build_paper_summary(pap, now_str, interval):
+    """페이퍼 일일 요약 — 누적 성적표 + 오늘 성과 + 보유 중 포지션."""
+    from core.paper import scorecard
+    sc = scorecard(pap)
+    today = now_str.split(" ")[0]
+    # 오늘 청산된 트레이드(recent 최근 30건 기준)
+    today_tr = [t for t in pap.get("recent", []) if str(t.get("out", "")).startswith(today)]
+    open_pos = pap.get("open", {})
+
+    pf = "∞" if sc["pf"] == float("inf") else f"{sc['pf']:.2f}"
+    lines = [
+        f"<b>📊 페이퍼 일일 요약</b>  {_esc(now_str)} ({interval}봉)",
+        "",
+        f"<b>■ 누적</b>  {sc['n']}건 · 승률 {sc['wr']:.1f}% · 기대값 {sc['exp']:+.2f}% · "
+        f"PF {pf} · 누적손익 {sc['total']:+.1f}%",
+    ]
+    # 오늘
+    if today_tr:
+        w = sum(1 for t in today_tr if t["net"] > 0)
+        s = sum(t["net"] for t in today_tr) * 100
+        lines.append(f"<b>■ 오늘</b>  {len(today_tr)}건 · 승 {w}/패 {len(today_tr) - w} · 손익 {s:+.1f}%")
+        for t in today_tr[-8:]:
+            m = "🟢" if t["net"] > 0 else "🔴"
+            rs = _PAPER_REASON.get(t["reason"], t["reason"])
+            lines.append(f"   {m} <code>{_esc(t['sym'])}</code> {t['net'] * 100:+.2f}% · {_esc(rs)}")
+    else:
+        lines.append("<b>■ 오늘</b>  청산된 가상 매매 없음")
+    # 보유 중
+    if open_pos:
+        lines.append(f"<b>■ 보유 중</b>  {len(open_pos)}건")
+        for sym, p in list(open_pos.items())[:8]:
+            mb = _fmt_amount(p.get("max_buy_krw")) if p.get("max_buy_krw") else "-"
+            lines.append(f"   💎 <code>{_esc(sym)}</code> 진입 {_fmt_price(p['entry'])} "
+                         f"({_esc(p.get('entry_ts', ''))}) · 최대 {mb}")
+    else:
+        lines.append("<b>■ 보유 중</b>  없음")
+    lines.append("")
+    lines.append("<i>ℹ️ 정보용 가상 매매 누적 기록 — 실제 주문이 아닙니다.</i>")
     return "\n".join(lines)
 
 
