@@ -1,12 +1,18 @@
 name: trading-signal
 
-# 무료 배포 옵션: 매시간 1회 분석 실행.
-# 스케줄은 외부 트리거(cron-job.org)가 매시 정각(KST)에 workflow_dispatch 로 호출한다.
+# 단타 스캘핑: 5분마다 1회 분석 실행.
+# 스케줄은 외부 트리거(cron-job.org)가 5분 간격으로 workflow_dispatch 로 호출한다.
+# → cron-job.org 작업 스케줄을 "*/5 * * * *"(매 5분)로 설정할 것.
 # → GitHub 자체 schedule 이벤트(지연/누락 잦음) 대신 사용. 둘 다 켜면 중복 발송되므로 schedule 은 끔.
 on:
-  workflow_dispatch: {}         # 외부 트리거(cron-job.org) + 수동 실행 버튼
-  # schedule:                   # (비활성) GitHub 네이티브 크론 — 필요시 백업용으로만 사용
-  #   - cron: "5 * * * *"
+  workflow_dispatch:            # 외부 트리거(cron-job.org) + 수동 실행 버튼
+    inputs:
+      test_alert:
+        description: "합성 알림으로 텔레그램 발송 테스트(시장 무관 1건 강제 발송)"
+        type: boolean
+        default: false
+  # schedule:                   # (비활성) GitHub 네이티브 크론 — 5분 간격은 지연이 커서 비권장
+  #   - cron: "*/5 * * * *"
 
 # state.json 커밋백을 위해 쓰기 권한 필요 (on_change 스팸 방지용 상태 유지)
 permissions:
@@ -30,17 +36,25 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run signal (oneshot)
+        if: ${{ github.event.inputs.test_alert != 'true' }}
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           ONESHOT: "true"
-          CANDLE_INTERVAL: "24h"     # 일봉 EMA(5/20/60) 정배열 전략
-          TOP_N: "20"
-          HOURLY_STATUS: "true"      # 매시간 전 종목 현황 1건 발송(변화 없어도 "동일"로 표기)
-          DAILY_SUMMARY_HOUR: "-1"   # 매시간 현황이 전체를 커버하므로 별도 9시 요약은 끔(-1)
-          ALERT_MODE: "on_change"    # HOURLY_STATUS=true면 단건 알림은 비활성(다이제스트로 일원화)
-          # ALERT_ON_WATCH: "true"   # 전조(관찰) 시그널까지 받으려면 주석 해제
+          CANDLE_INTERVAL: "5m"      # 단타 스캘핑: 거래량 점화 + VWAP (5분봉)
+          TOP_N: "20"                # 24H 거래대금 상위 20개
+          HOURLY_STATUS: "false"     # 단타는 이벤트 기반 — 매번 전 종목 다이제스트는 끔(스팸)
+          ALERT_MODE: "on_change"    # 시그널이 바뀐 종목만 즉시 알림(점화 진입 / 청산)
+          DAILY_SUMMARY_HOUR: "-1"   # 별도 일일 요약 끔
+          # ALERT_ON_WATCH: "true"   # '점화 대기(관찰)'까지 받으려면 주석 해제
         run: python main.py
+
+      - name: Telegram 발송 테스트 (수동 test_alert=true 일 때만)
+        if: ${{ github.event.inputs.test_alert == 'true' }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python scripts/test_alert.py
 
       - name: Persist state (on_change 유지)
         # state.json 은 .gitignore 대상이라 -f 로 강제 스테이징 후 staged diff 로 변경 판정

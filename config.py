@@ -34,6 +34,22 @@ def _get_list(key: str, default=None):
     return [x.strip().upper() for x in raw.split(",") if x.strip()]
 
 
+def _get_int_list(key: str, default=None):
+    raw = _get(key)
+    if not raw:
+        return default or []
+    out = []
+    for x in raw.split(","):
+        x = x.strip()
+        if not x:
+            continue
+        try:
+            out.append(int(x))
+        except ValueError:
+            continue
+    return out
+
+
 class Config:
     # --- 텔레그램 (필수) ---
     TELEGRAM_BOT_TOKEN = _get("TELEGRAM_BOT_TOKEN")
@@ -46,22 +62,41 @@ class Config:
     # 자동 선정 시 제외할 심볼. 기본은 스테이블코인도 '포함'(빈 리스트).
     EXCLUDE = _get_list("EXCLUDE", [])
     QUOTE = _get("QUOTE", "KRW")              # 마켓 통화
-    CANDLE_INTERVAL = _get("CANDLE_INTERVAL", "24h")  # 일봉 전략 기본값 (24h)
+    CANDLE_INTERVAL = _get("CANDLE_INTERVAL", "5m")  # 단타 스캘핑 기본값 (5분봉)
 
     # --- 스케줄 ---
-    CHECK_INTERVAL_MIN = _get_int("CHECK_INTERVAL_MIN", 60)   # 분석 주기(분)
-    DAILY_SUMMARY_HOUR = _get_int("DAILY_SUMMARY_HOUR", 9)    # 일일 요약 발송 시각(KST, 0~23, -1이면 끔)
+    CHECK_INTERVAL_MIN = _get_int("CHECK_INTERVAL_MIN", 5)    # 분석 주기(분) — 단타는 5분
+    DAILY_SUMMARY_HOUR = _get_int("DAILY_SUMMARY_HOUR", -1)   # 일일 요약 발송 시각(KST, 0~23, -1이면 끔)
 
-    # --- EMA 정배열 단계 시그널 파라미터 ---
-    EMA_FAST = _get_int("EMA_FAST", 5)
-    EMA_MID = _get_int("EMA_MID", 20)
-    EMA_SLOW = _get_int("EMA_SLOW", 60)
-    SLOPE_LOOKBACK = _get_int("SLOPE_LOOKBACK", 3)   # EMA 기울기 측정 봉 수
-    BASE_WINDOW = _get_int("BASE_WINDOW", 12)        # 바닥 다지기 판정 구간(봉)
-    BASE_BELOW_RATIO = _get_float("BASE_BELOW_RATIO", 0.5)  # 구간 중 EMA60 아래 비율
-    # 참고용 보조지표
+    # --- 단타 스캘핑(거래량 점화 + VWAP) 파라미터 ---
+    # 단기 모멘텀 EMA (5분봉 기준)
+    EMA_FAST = _get_int("EMA_FAST", 9)
+    EMA_SLOW = _get_int("EMA_SLOW", 21)
+    # RVOL(상대거래량) — 주 트리거
+    RVOL_PERIOD = _get_int("RVOL_PERIOD", 20)            # 평균 산정 봉 수
+    RVOL_TRIGGER = _get_float("RVOL_TRIGGER", 2.5)       # 진입 거래량 배수
+    RVOL_WATCH = _get_float("RVOL_WATCH", 1.8)           # 관찰(점화 대기) 배수
+    RVOL_MIN = _get_float("RVOL_MIN", 2.0)              # 시간대 완화해도 이 밑으론 안 내림
+    # 돌파/과열 필터
+    BREAKOUT_LOOKBACK = _get_int("BREAKOUT_LOOKBACK", 20)  # 직전 N봉 고점 돌파
+    MAX_EXT_VWAP = _get_float("MAX_EXT_VWAP", 0.04)        # VWAP 대비 +4% 넘으면 추격 금지(늦음)
+    # RSI 밴드 — 모멘텀 충분 + 막차 차단
     RSI_PERIOD = _get_int("RSI_PERIOD", 14)
-    # WATCH(전조) 시그널도 알림 보낼지 (기본 off — 노이즈 방지)
+    RSI_BUY_MIN = _get_float("RSI_BUY_MIN", 50.0)
+    RSI_BUY_MAX = _get_float("RSI_BUY_MAX", 72.0)
+    RSI_OVERHEAT = _get_float("RSI_OVERHEAT", 80.0)       # 청산(블로우오프) 기준
+    # 목표 수익(분할 익절 기준). 손절은 봉저점/VWAP 중 가까운 쪽(엔진 산정)
+    TARGET_PCT = _get_float("TARGET_PCT", 0.025)          # +2.5%
+    # 거래 집중 시간대(KST 정수 시) — 이 시간대엔 RVOL 트리거 완화
+    KEY_HOURS = set(_get_int_list("KEY_HOURS", [8, 9, 10, 20, 21, 22]))
+    KEY_HOUR_RELAX = _get_float("KEY_HOUR_RELAX", 0.5)    # 집중 시간대 트리거 인하폭
+
+    # --- 호가창 유동성 기반 '권장 최대 매수금액' ---
+    # 매도호가를 이 슬리피지 이내까지 긁었을 때 받쳐주는 KRW = 혼자 호가 안 밀고 살 수 있는 양
+    LIQUIDITY_SLIPPAGE = _get_float("LIQUIDITY_SLIPPAGE", 0.005)  # 0.5%
+    LIQUIDITY_SAFETY = _get_float("LIQUIDITY_SAFETY", 0.5)       # 그중 권장 비중(절반)
+    THIN_BOOK_KRW = _get_float("THIN_BOOK_KRW", 5_000_000)       # 이 밑이면 '호가 얇음' 경고
+    # WATCH(점화 대기) 시그널도 알림 보낼지 (기본 off — 노이즈 방지)
     ALERT_ON_WATCH = _get("ALERT_ON_WATCH", "false").lower() == "true"
 
     # 매수계열(EARLY_BUY/CONFIRMED_BUY) + 매도계열(EARLY_SELL/EXIT)만 알림. HOLD 무시.

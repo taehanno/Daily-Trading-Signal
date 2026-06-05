@@ -53,6 +53,46 @@ def top_symbols_by_volume(quote: str = "KRW", top_n: int = 15) -> list:
     return [sym for sym, _ in rows[:top_n]]
 
 
+def get_orderbook(symbol: str, quote: str = "KRW", count: int = 30) -> dict:
+    """
+    호가창. 반환: {"asks": [(price, qty), ...] 가격오름차순,
+                   "bids": [(price, qty), ...] 가격내림차순}.
+    asks = 매도호가(내가 사는 쪽), bids = 매수호가(내가 파는 쪽).
+    """
+    data = _get(f"{BASE}/orderbook/{symbol}_{quote}?count={count}")
+
+    def _rows(side):
+        out = []
+        for r in data.get(side, []):
+            try:
+                out.append((float(r["price"]), float(r["quantity"])))
+            except (KeyError, ValueError, TypeError):
+                continue
+        return out
+
+    asks = sorted(_rows("asks"), key=lambda x: x[0])           # 낮은 가격(최우선 매도)부터
+    bids = sorted(_rows("bids"), key=lambda x: x[0], reverse=True)
+    return {"asks": asks, "bids": bids}
+
+
+def ask_liquidity_within(asks: list, slippage: float) -> float:
+    """
+    최우선 매도호가 기준 slippage(예 0.005=0.5%) 이내 구간의 매도물량 합(KRW).
+    = '호가를 그 이상 밀지 않고' 시장가로 사들일 수 있는 금액. asks 비면 None.
+    호가 30단계로도 한도에 안 닿으면(매우 두꺼움) 보수적으로 받은 만큼만 합산.
+    """
+    if not asks:
+        return None
+    best = asks[0][0]
+    limit = best * (1 + slippage)
+    krw = 0.0
+    for price, qty in asks:
+        if price > limit:
+            break
+        krw += price * qty
+    return krw
+
+
 def get_candles(symbol: str, quote: str = "KRW", interval: str = "1h") -> list:
     """
     캔들 리스트를 시간 오름차순 dict 리스트로 반환.

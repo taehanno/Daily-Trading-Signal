@@ -63,6 +63,24 @@ def resolve_targets(cfg):
         return []
 
 
+# ---------- 호가창 유동성 → 권장 최대 매수금액 ----------
+def attach_liquidity(cfg, sym, sig):
+    """매수 시그널에 호가창 기반 유동성/권장 최대 매수금액을 붙인다(실패 시 조용히 패스)."""
+    try:
+        ob = bithumb.get_orderbook(sym, cfg.QUOTE)
+        liq = bithumb.ask_liquidity_within(ob["asks"], cfg.LIQUIDITY_SLIPPAGE)
+    except bithumb.BithumbError as e:
+        print(f"  - {sym} 호가 조회 실패: {e}")
+        liq = None
+    bithumb.polite_sleep(cfg.REQUEST_SLEEP)
+    if liq is None:
+        return
+    sig["liquidity_krw"] = liq                                  # 슬리피지 이내 매도물량(KRW)
+    sig["max_buy_krw"] = liq * cfg.LIQUIDITY_SAFETY             # 권장 최대 매수금액
+    sig["liquidity_slippage"] = cfg.LIQUIDITY_SLIPPAGE
+    sig["thin_book"] = sig["max_buy_krw"] < cfg.THIN_BOOK_KRW   # 호가 얇음 경고
+
+
 # ---------- 1회 분석 사이클 ----------
 def run_cycle(cfg, state):
     targets = resolve_targets(cfg)
@@ -74,6 +92,9 @@ def run_cycle(cfg, state):
             candles = bithumb.get_candles(sym, cfg.QUOTE, cfg.CANDLE_INTERVAL)
             sig = sig_engine.analyze(candles, cfg)
             if sig:
+                # 매수 시그널이면 호가창 유동성으로 '권장 최대 매수금액' 산정
+                if sig["label"] in sig_engine.BUY_SIDE:
+                    attach_liquidity(cfg, sym, sig)
                 results.append((sym, sig))
         except bithumb.BithumbError as e:
             print(f"  - {sym} 조회 실패: {e}")

@@ -30,14 +30,60 @@ def _fmt_change(pct):
     return f"{arrow}{abs(pct):.2f}%"
 
 
+def _fmt_amount(krw):
+    """KRW 금액을 억/만원 단위로 읽기 쉽게."""
+    if krw is None:
+        return "-"
+    if krw >= 1e8:
+        return f"{krw / 1e8:.1f}억원"
+    if krw >= 1e4:
+        return f"{krw / 1e4:,.0f}만원"
+    return f"{krw:,.0f}원"
+
+
+def _liquidity_line(sig):
+    """권장 최대 매수금액 한 줄. 데이터 없으면 None."""
+    mb = sig.get("max_buy_krw")
+    if mb is None:
+        return None
+    slip = (sig.get("liquidity_slippage") or 0) * 100
+    liq = sig.get("liquidity_krw")
+    warn = " ⚠️호가 얇음·소액만" if sig.get("thin_book") else ""
+    return (f"💧 권장 최대 매수 ≈ <b>{_fmt_amount(mb)}</b>"
+            f"  (호가 {slip:.1f}% 이내 매도물량 {_fmt_amount(liq)}){warn}")
+
+
+def _fmt_vwap_line(sig):
+    """VWAP·RVOL·RSI 한 줄(단타 핵심 지표)."""
+    parts = []
+    if sig.get("vwap") is not None:
+        parts.append(f"VWAP {_fmt_price(sig['vwap'])}")
+        parts.append(f"가격 {sig['ext_vwap'] * 100:+.1f}%")
+    if sig.get("rvol") is not None:
+        parts.append(f"RVOL {sig['rvol']:.1f}배")
+    if sig.get("rsi") is not None:
+        parts.append(f"RSI {sig['rsi']:.0f}")
+    return " · ".join(parts)
+
+
 def build_signal_message(symbol, sig, interval):
     """단건 시그널 알림 메시지(HTML)."""
     lines = [
         f"<b>{sig['label_kr']}</b>  <code>{_esc(symbol)}/KRW</code>",
         f"가격 {_fmt_price(sig['price'])}  {_fmt_change(sig['change_pct'])}  ({interval}봉)",
-        f"EMA 5/20/60: {_fmt_price(sig['ema_fast'])} / {_fmt_price(sig['ema_mid'])} / {_fmt_price(sig['ema_slow'])}",
+        _fmt_vwap_line(sig),
     ]
-    # 매수 시그널이면 예상 보유기간 강조
+    # 매수 점화면 목표/손절 강조
+    if sig.get("target") is not None:
+        tp = sig.get("target_pct") or 0
+        lines.append(
+            f"🎯 목표 {_fmt_price(sig['target'])} (+{tp * 100:.1f}%)  "
+            f"🛑 손절 {_fmt_price(sig['stop'])} (봉저점/VWAP)")
+    # 호가창 유동성 기반 권장 최대 매수금액
+    liq_line = _liquidity_line(sig)
+    if liq_line:
+        lines.append(liq_line)
+    # 예상 보유기간 강조
     horizon = sig.get("horizon")
     if horizon:
         lines.append(f"⏳ <b>예상 보유: {_esc(horizon[0])}</b> · {_esc(horizon[1])}")
@@ -104,7 +150,7 @@ def build_status_message(results, since, prev_signals, interval, now_str):
     - now_str: 현재 시각 문자열(KST)
     변화가 없어도 항상 1건을 만든다. (각 종목의 발생 시각과 동일 여부 표기)
     """
-    from core.signal import BUY_SIDE, SELL_SIDE, LABELS
+    from core.signal import BUY_SIDE, SELL_SIDE, LABELS, WATCH_LABEL
 
     def _mark(sym, sig):
         """변화 표식. 신규/방금 변화/동일 중 하나."""
@@ -126,6 +172,9 @@ def build_status_message(results, since, prev_signals, interval, now_str):
         """매수 후보: 헤더 + 보유기간 + 유지/청산 가이드(2~3줄)."""
         out = [(f"  <code>{_esc(sym)}</code> {_esc(_short(sig['label_kr']))} "
                 f"{_fmt_change(sig['change_pct'])}  {_mark(sym, sig)}")]
+        liq_line = _liquidity_line(sig)
+        if liq_line:
+            out.append("    " + liq_line)
         h = sig.get("horizon")
         if h:
             out.append(f"    ⏳ {_esc(h[0])} · {_esc(h[1])}")
@@ -147,7 +196,7 @@ def build_status_message(results, since, prev_signals, interval, now_str):
 
     buys = [(s, r) for s, r in results if r["label"] in BUY_SIDE]
     sells = [(s, r) for s, r in results if r["label"] in SELL_SIDE]
-    watches = [(s, r) for s, r in results if r["label"] == "WATCH"]
+    watches = [(s, r) for s, r in results if r["label"] == WATCH_LABEL]
     holds = [(s, r) for s, r in results if r["label"] == "HOLD"]
 
     n_new = sum(1 for s, _ in results if prev_signals.get(s) is None)

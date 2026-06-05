@@ -93,10 +93,44 @@ def bollinger(closes, period=20, mult=2.0):
 
 
 def volume_surge(volumes, period=20):
-    """최근 거래량 / 직전 period 평균 거래량 비율. 데이터 부족 시 None."""
+    """최근 거래량 / 직전 period 평균 거래량 비율(RVOL). 데이터 부족 시 None."""
     if len(volumes) < period + 1:
         return None
     avg = sum(volumes[-period - 1:-1]) / period
     if avg == 0:
         return None
     return volumes[-1] / avg
+
+
+def vwap(candles):
+    """
+    거래량가중평균가(VWAP). candles: [{high, low, close, volume}, ...].
+    당일 단타 기준선 — 보통 '오늘 세션' 캔들만 넘긴다(호출 측에서 슬라이스).
+    각 봉의 대표가(high+low+close)/3 를 거래량으로 가중평균. 데이터 부족/거래량 0 시 None.
+    """
+    num = 0.0
+    den = 0.0
+    for c in candles:
+        typ = (c["high"] + c["low"] + c["close"]) / 3.0
+        num += typ * c["volume"]
+        den += c["volume"]
+    return num / den if den > 0 else None
+
+
+def atr(candles, period=14):
+    """
+    Average True Range(변동성). candles: [{high, low, close}, ...] 오름차순.
+    손절폭 산정용. 데이터 부족 시 None.
+    """
+    if len(candles) < period + 1:
+        return None
+    trs = []
+    for i in range(1, len(candles)):
+        h, l = candles[i]["high"], candles[i]["low"]
+        pc = candles[i - 1]["close"]
+        trs.append(max(h - l, abs(h - pc), abs(l - pc)))
+    # Wilder 평활
+    atr_val = sum(trs[:period]) / period
+    for tr in trs[period:]:
+        atr_val = (atr_val * (period - 1) + tr) / period
+    return atr_val
