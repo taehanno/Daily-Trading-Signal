@@ -51,6 +51,17 @@ Render(클라우드)에서 24시간 상시 실행됩니다.
 
 > ⚠️ 단타라 보유 기준은 **초단기(수분~30분)**. 청산 시그널 또는 VWAP 이탈을 칼같이 따른다.
 
+### 2-1. 백테스트 결과 & 페이퍼 트레이딩 (중요)
+
+10일치 5분봉으로 walk-forward 백테스트(`scripts/backtest.py`, `scripts/backtest_pullback.py`)한 결과,
+**돌파추격·눌림목 두 진입 모두 전 파라미터 조합에서 PF 0.55~0.72(마이너스)**. 원인은 진입 로직이
+아니라 ① 단일 하락/횡보 국면(10일 표본) ② 잦은 거래의 수수료 드래그였다.
+
+→ 그래서 **실돈 자동매매 대신 페이퍼 트레이딩(`PAPER_TRADING=true`)** 으로 운용한다.
+`BUY_IGNITION`마다 가상 진입을 열고 목표/손절/엔진청산으로 닫아 **누적 성적표(승률·기대값·PF)** 를
+`state.json`에 쌓는다. 여러 시장국면에 걸친 실제 성과가 모이면 그때 실거래 여부를 재평가.
+모든 알림에 `ℹ️ 정보용 — 실제 주문 아님`을 명시한다.
+
 ---
 
 ## 3. 프로젝트 구조
@@ -143,6 +154,9 @@ TELEGRAM_BOT_TOKEN=토큰 TELEGRAM_CHAT_ID=아이디 ONESHOT=true python main.py
 | `DAILY_SUMMARY_HOUR` | `-1` | 일일 요약 시각(KST). `-1`이면 끔 |
 | `ALERT_MODE` | `on_change` | `on_change` / `always` |
 | `ALERT_ON_WATCH` | `false` | 관찰(점화 대기) 시그널도 알림할지 |
+| `PAPER_TRADING` | `true` | 가상매매 기록 모드(실돈 X). 진입/청산+누적 성적표 |
+| `PAPER_FEE` | `0.001` | 페이퍼 왕복 수수료 가정(0.1%) |
+| `PAPER_MAX_HOLD_BARS` | `24` | 페이퍼 시간손절(봉, 24=2시간) |
 | `DRY_RUN` | `false` | true면 콘솔 출력(발송 안 함) |
 | `ONESHOT` | `false` | true면 1회 실행 후 종료 |
 

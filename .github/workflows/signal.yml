@@ -43,8 +43,9 @@ jobs:
           ONESHOT: "true"
           CANDLE_INTERVAL: "5m"      # 단타 스캘핑: 거래량 점화 + VWAP (5분봉)
           TOP_N: "20"                # 24H 거래대금 상위 20개
-          HOURLY_STATUS: "false"     # 단타는 이벤트 기반 — 매번 전 종목 다이제스트는 끔(스팸)
-          ALERT_MODE: "on_change"    # 시그널이 바뀐 종목만 즉시 알림(점화 진입 / 청산)
+          PAPER_TRADING: "true"      # 정보용 가상매매 기록(실시간 포워드테스트) — 실돈 X
+          HOURLY_STATUS: "false"     # 단건 이벤트 기반(페이퍼 진입/청산)
+          ALERT_MODE: "on_change"
           DAILY_SUMMARY_HOUR: "-1"   # 별도 일일 요약 끔
           # ALERT_ON_WATCH: "true"   # '점화 대기(관찰)'까지 받으려면 주석 해제
         run: python main.py

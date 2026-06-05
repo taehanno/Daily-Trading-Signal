@@ -23,6 +23,7 @@ except (AttributeError, ValueError):
 from config import Config
 from exchanges import bithumb
 from core import signal as sig_engine
+from core import paper as paper_engine
 from notifier import telegram
 
 KST = timezone(timedelta(hours=9))
@@ -87,6 +88,7 @@ def run_cycle(cfg, state):
     print(f"[{datetime.now(KST):%Y-%m-%d %H:%M}] 분석 대상 {len(targets)}개: {', '.join(targets)}")
 
     results = []
+    market = {}   # {sym: {"bar": <eval 봉>, "label": str}} — 페이퍼 청산 점검용
     for sym in targets:
         try:
             candles = bithumb.get_candles(sym, cfg.QUOTE, cfg.CANDLE_INTERVAL)
@@ -96,6 +98,8 @@ def run_cycle(cfg, state):
                 if sig["label"] in sig_engine.BUY_SIDE:
                     attach_liquidity(cfg, sym, sig)
                 results.append((sym, sig))
+                if len(candles) >= 2:
+                    market[sym] = {"bar": candles[-2], "label": sig["label"]}
         except bithumb.BithumbError as e:
             print(f"  - {sym} 조회 실패: {e}")
         bithumb.polite_sleep(cfg.REQUEST_SLEEP)
@@ -113,9 +117,21 @@ def run_cycle(cfg, state):
         if prev_signals.get(sym) != sig["label"]:
             since[sym] = now_str
 
-    # --- actionable 단건 알림 (HOURLY_STATUS 모드에서는 현황 다이제스트로 일원화하므로 생략) ---
     sent = 0
-    if not cfg.HOURLY_STATUS:
+    # --- 페이퍼 트레이딩: 가상 진입/청산 기록 + 알림 (단건 시그널 알림을 대체) ---
+    if cfg.PAPER_TRADING:
+        sigs_by_sym = {sym: sig for sym, sig in results}
+        events = paper_engine.update(cfg, state, sigs_by_sym, market, now_str)
+        for ev in events:
+            if ev["type"] == "entry":
+                msg = telegram.build_paper_entry(ev["sym"], ev["sig"], cfg.CANDLE_INTERVAL)
+            else:
+                msg = telegram.build_paper_exit(ev)
+            if telegram.send(cfg, msg):
+                sent += 1
+            bithumb.polite_sleep(0.1)
+    # --- actionable 단건 알림 (페이퍼/HOURLY_STATUS 모드에서는 생략) ---
+    elif not cfg.HOURLY_STATUS:
         for sym, sig in results:
             actionable = sig["is_actionable"] or (cfg.ALERT_ON_WATCH and sig["label"] == "WATCH")
             if not actionable:

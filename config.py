@@ -103,6 +103,12 @@ class Config:
     # WATCH(점화 대기) 시그널도 알림 보낼지 (기본 off — 노이즈 방지)
     ALERT_ON_WATCH = _get("ALERT_ON_WATCH", "false").lower() == "true"
 
+    # --- 페이퍼 트레이딩(가상매매 자동 기록 — 실시간 포워드 테스트) ---
+    # on이면 단건 시그널 알림 대신 가상 진입/청산 + 누적 성적표를 보낸다(실돈 X).
+    PAPER_TRADING = _get("PAPER_TRADING", "true").lower() == "true"
+    PAPER_FEE = _get_float("PAPER_FEE", 0.001)            # 왕복 수수료 가정(0.1%)
+    PAPER_MAX_HOLD_BARS = _get_int("PAPER_MAX_HOLD_BARS", 24)  # 시간손절(봉, 24=2시간)
+
     # 매수계열(EARLY_BUY/CONFIRMED_BUY) + 매도계열(EARLY_SELL/EXIT)만 알림. HOLD 무시.
     # on_change: 직전 시그널과 달라졌을 때만 알림 (스팸 방지). always: 매 주기 알림.
     ALERT_MODE = _get("ALERT_MODE", "on_change")

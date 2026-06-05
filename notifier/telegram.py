@@ -100,6 +100,48 @@ def build_signal_message(symbol, sig, interval):
     return "\n".join(lines)
 
 
+_PAPER_REASON = {
+    "target": "🎯 목표 달성", "stop": "🛑 손절", "engine_exit": "엔진 청산(VWAP이탈/과열)",
+    "eod": "당일 마감", "time": "시간 손절",
+}
+
+
+def _scorecard_line(sc):
+    pf = "∞" if sc["pf"] == float("inf") else f"{sc['pf']:.2f}"
+    return (f"📊 페이퍼 누적 {sc['n']}건 · 승률 {sc['wr']:.1f}% · "
+            f"기대값 {sc['exp']:+.2f}% · PF {pf} · 누적 {sc['total']:+.1f}%")
+
+
+def build_paper_entry(symbol, sig, interval):
+    """페이퍼(가상) 진입 기록 메시지."""
+    lines = [
+        f"📗 <b>[페이퍼] 가상 진입</b>  <code>{_esc(symbol)}/KRW</code>",
+        f"진입 {_fmt_price(sig['price'])}  ({interval}봉) · RVOL {sig.get('rvol', 0):.1f}배 · RSI {sig.get('rsi', 0):.0f}",
+    ]
+    if sig.get("target") is not None:
+        tp = sig.get("target_pct") or 0
+        lines.append(f"🎯 목표 {_fmt_price(sig['target'])} (+{tp * 100:.1f}%)  "
+                     f"🛑 손절 {_fmt_price(sig['stop'])}")
+    liq = _liquidity_line(sig)
+    if liq:
+        lines.append(liq)
+    lines.append("<i>ℹ️ 정보용 가상 매매 기록 — 실제 주문이 아닙니다.</i>")
+    return "\n".join(lines)
+
+
+def build_paper_exit(ev):
+    """페이퍼(가상) 청산 기록 메시지 + 누적 성적표."""
+    sym, net = ev["sym"], ev["net"]
+    mark = "🟢" if net > 0 else "🔴"
+    lines = [
+        f"📕 <b>[페이퍼] 가상 청산</b>  <code>{_esc(sym)}/KRW</code>  {mark}",
+        f"사유 {_PAPER_REASON.get(ev['reason'], ev['reason'])} · 손익 <b>{net * 100:+.2f}%</b> (수수료 반영)",
+        f"진입 {_esc(ev['in'])} → 청산 {_esc(ev['out'])}",
+        _scorecard_line(ev["scorecard"]),
+    ]
+    return "\n".join(lines)
+
+
 def build_summary_message(results, interval, top=10):
     """일일 요약 메시지(HTML). results: [(symbol, sig)] 스코어 내림차순 정렬됨."""
     from core.signal import BUY_SIDE, SELL_SIDE
