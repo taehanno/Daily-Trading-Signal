@@ -2,21 +2,21 @@
 # 페이퍼 트레이딩 — 가상 진입/청산 자동 기록(실시간 포워드 테스트)
 # ============================================
 """
-실돈을 넣지 않고, BUY_IGNITION 시그널마다 '가상 포지션'을 열고 이후 봉에서
-목표/손절/엔진청산/당일마감/시간손절로 닫는다. 누적 성적표(승률·기대값·PF)를
-state.json 에 쌓아 여러 시장국면에 걸친 실제 성과를 모은다.
+실돈을 넣지 않고, 스윙 매수(BUY_IGNITION) 시그널마다 '가상 포지션'을 열고 이후
+일봉에서 손절/엔진청산(추세전환)/시간손절(일)로 닫는다. 누적 성적표(승률·기대값·PF)를
+state.json 에 쌓아 실시간(진짜 out-of-sample) 성과를 모은다.
 
 백테스트와 동일한 정산 규칙(보수적):
-  · 청산 우선순위: 손절 → 목표 → 당일마감 → 엔진청산 → 시간손절
-  · 같은 봉에서 손절·목표 동시 터치 시 손절 우선
+  · 청산 우선순위: 손절 → (목표) → 엔진청산(추세전환) → 시간손절(일)
   · 진입가 = 시그널 발생 봉 종가(라이브 근사), 청산에 왕복 수수료 반영
+  · 스윙이라 당일마감(EOD) 청산은 없음 — 며칠~몇주 보유
 
 상태(state["paper"]):
-  open   : {sym: {entry, entry_ts, entry_date, stop, target, bars, rvol, max_buy_krw}}
+  open   : {sym: {entry, entry_ts, entry_date, stop, target, exit_level, rvol, ...}}
   stats  : {n, wins, sum, gp, gl}   누적(과거 trim돼도 유지)
   recent : 최근 청산 30건
 """
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 
 from exchanges import bithumb
 
@@ -27,17 +27,13 @@ def _kst_date_str(ts_ms):
     return datetime.fromtimestamp(ts_ms / 1000, KST).date().isoformat()
 
 
-def _bar_minutes(interval):
-    """'5m'→5, '1h'→60. 파싱 실패 시 5."""
+def _days_held(entry_date_str, bar_ts):
+    """진입일 ~ 현재 봉 날짜(KST) 사이 일수. 파싱 실패 시 0."""
     try:
-        s = interval.strip().lower()
-        if s.endswith("m"):
-            return int(s[:-1])
-        if s.endswith("h"):
-            return int(s[:-1]) * 60
-        return int("".join(ch for ch in s if ch.isdigit()) or 5)
-    except (ValueError, AttributeError):
-        return 5
+        return (date.fromisoformat(_kst_date_str(bar_ts))
+                - date.fromisoformat(entry_date_str)).days
+    except (ValueError, TypeError):
+        return 0
 
 
 def _init(state):
@@ -64,22 +60,20 @@ def scorecard(pap):
     }
 
 
-def _exit_check(cfg, pos, bar, label, day_changed):
-    """청산 사유/체결가 반환 또는 None. 우선순위: 손절→목표→당일마감→엔진→시간."""
+def _exit_check(cfg, pos, bar, label, days_held):
+    """청산 사유/체결가 반환 또는 None. 우선순위: 손절→목표→엔진(추세전환)→시간(일)."""
     if pos.get("stop") and bar["low"] <= pos["stop"]:
         return "stop", pos["stop"]
     if pos.get("target") and bar["high"] >= pos["target"]:
         return "target", pos["target"]
-    if day_changed:
-        return "eod", bar["close"]
     if label == "EXIT_SCALP":
         return "engine_exit", bar["close"]
-    if pos.get("bars", 0) >= cfg.PAPER_MAX_HOLD_BARS:
+    if days_held >= cfg.PAPER_MAX_HOLD_DAYS:
         return "time", bar["close"]
     return None
 
 
-def _record(pap, sym, pos, price, net, reason, now_str):
+def _record(pap, sym, pos, price, net, reason, now_str, days_held):
     st = pap["stats"]
     st["n"] += 1
     st["sum"] += net
@@ -91,7 +85,7 @@ def _record(pap, sym, pos, price, net, reason, now_str):
     pap["recent"].append({
         "sym": sym, "entry": pos["entry"], "exit": price, "net": net,
         "reason": reason, "in": pos["entry_ts"], "out": now_str,
-        "bars": pos.get("bars", 0),
+        "days": days_held,
     })
     pap["recent"] = pap["recent"][-30:]
 
@@ -123,20 +117,18 @@ def update(cfg, state, sigs_by_sym, market, now_str):
         else:
             bar, label = m["bar"], m["label"]
 
-        pos["bars"] = pos.get("bars", 0) + 1
-        day_changed = _kst_date_str(bar["ts"]) != pos.get("entry_date")
-        ex = _exit_check(cfg, pos, bar, label, day_changed)
+        days_held = _days_held(pos.get("entry_date"), bar["ts"])
+        ex = _exit_check(cfg, pos, bar, label, days_held)
         if ex:
             reason, price = ex
             net = (price - pos["entry"]) / pos["entry"] - cfg.PAPER_FEE
-            _record(pap, sym, pos, price, net, reason, now_str)
+            _record(pap, sym, pos, price, net, reason, now_str, days_held)
             del open_pos[sym]
-            bar_min = _bar_minutes(cfg.CANDLE_INTERVAL)
             events.append({
                 "type": "exit", "sym": sym, "net": net, "reason": reason,
                 "entry": pos["entry"], "exit": price, "in": pos["entry_ts"],
-                "out": now_str, "bars": pos.get("bars", 0),
-                "hold_min": pos.get("bars", 0) * bar_min,
+                "out": now_str, "days": days_held,
+                "exit_level": pos.get("exit_level"),
                 "scorecard": scorecard(pap),
             })
 
@@ -144,27 +136,16 @@ def update(cfg, state, sigs_by_sym, market, now_str):
     for sym, sig in sigs_by_sym.items():
         if sig["label"] != "BUY_IGNITION" or sym in open_pos:
             continue
-        if sig.get("stop") is None or sig.get("target") is None:
+        if sig.get("stop") is None:      # 스윙은 목표 없음 — 손절만 필수
             continue
         bar = market.get(sym, {}).get("bar")
         open_pos[sym] = {
             "entry": sig["price"], "entry_ts": now_str,
-            "entry_date": _kst_date_str(bar["ts"]) if bar else None,
-            "stop": sig["stop"], "target": sig["target"], "bars": 0,
-            "rvol": sig.get("rvol"), "max_buy_krw": sig.get("max_buy_krw"),
+            "entry_date": _kst_date_str(bar["ts"]) if bar else now_str.split(" ")[0],
+            "stop": sig["stop"], "target": sig.get("target"),
+            "exit_level": sig.get("exit_level"), "rvol": sig.get("rvol"),
+            "max_buy_krw": sig.get("max_buy_krw"), "hold_text": sig.get("hold_text"),
         }
-        # '몇 분 뒤 Exit'(시간손절 시각) 산정 — 스캘핑 청산 클락
-        bar_min = _bar_minutes(cfg.CANDLE_INTERVAL)
-        max_min = cfg.PAPER_MAX_HOLD_BARS * bar_min
-        exit_clock = None
-        try:
-            t = datetime.strptime(now_str, "%Y-%m-%d %H:%M") + timedelta(minutes=max_min)
-            exit_clock = t.strftime("%H:%M")
-        except ValueError:
-            pass
-        events.append({
-            "type": "entry", "sym": sym, "sig": sig,
-            "max_min": max_min, "exit_clock": exit_clock,
-        })
+        events.append({"type": "entry", "sym": sym, "sig": sig})
 
     return events

@@ -218,7 +218,8 @@ DEFAULT = {
     "rsi_min": 40.0, "rsi_max": 65.0,
     "target": 0.015, "stop_buf": 0.001,
     "htf_ema": 0,   # 0=off. >0 이면 해당 길이 EMA로 상위추세 필터
-    "max_hold": 24, "fee": float(os.environ.get("BT_FEE", 0.001)),
+    "max_hold": int(os.environ.get("BT_MAX_HOLD", 24)),
+    "fee": float(os.environ.get("BT_FEE", 0.001)),
     "slip": float(os.environ.get("BT_SLIP", 0.0005)),
 }
 

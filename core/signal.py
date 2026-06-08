@@ -1,26 +1,27 @@
 # ============================================
-# 시그널 엔진 — 단타(스캘핑): 거래량 점화 + VWAP 돌파
+# 시그널 엔진 — 일봉 스윙: 돈치안 돌파 + 거래량 급증
 # ============================================
 """
-전략 핵심(일봉 정배열 → 단타 점화로 전면 교체):
-  '정배열 완성'을 기다리면 이미 다 오른 뒤라 늦는다. 그래서 후행 지표 대신
-  '지금 거래량이 터지며 가격이 막 치고 올라가는 순간'(ignition)을 잡는다.
+전략(단타 전면 폐기 → 일봉 스윙 추세추종):
+  5분·1시간 단타는 수수료에 엣지가 먹혀 전부 본전~마이너스로 검증됨. 시간축을 일봉으로
+  올리면 한 번의 추세를 며칠~몇주 먹으므로 수수료가 무의미해지고, 추세추종 본연의 엣지
+  (손실 짧게·수익 길게 = 양의 왜도)가 살아난다. (검증: scripts/backtest_swing.py,
+  ~1050일 train/test 양쪽 PF 3.4~4.0 out-of-sample)
 
-평가 봉: 마지막 '확정' 5분봉(형성 중인 미완성 봉은 거래량이 덜 차서 가짜 서지가
-  잡히므로 제외). 5분 주기로 돌리면 최대 5~10분 지연 — 일봉 1일 지연과는 차원이 다름.
+평가 봉: 마지막 '확정' 일봉(형성 중인 오늘 봉 제외). 하루 1회 이상 돌려도 확정봉은
+  하루 한 번만 바뀌므로 on_change/페이퍼 멱등 처리로 중복 없음.
 
-진입(BUY_IGNITION) — 아래가 동시 충족될 때:
-  · RVOL(상대거래량) ≥ 트리거       거래량 폭발 = 지금 수급 유입 (주 트리거)
-  · 가격 > VWAP                      당일 매수 우위 (VWAP는 매일 리셋 = 단타 기준선)
-  · 직전 N봉 고점 돌파               방향 확인 (거래량만으론 덤핑일 수 있음)
-  · EMA9 > EMA21 & EMA9 상승         단기 모멘텀 상방
-  · RSI 하한~상한(예 50~72)          모멘텀 충분하되 막차(과매수 80↑)는 차단
-  · VWAP 대비 과열도 ≤ 한도          이미 멀리 떠 있으면 추격 금지 ← '늦음' 방지 핵심
+진입(BUY_IGNITION = 스윙 매수) — 동시 충족:
+  · 종가 > 직전 SWING_DON_N일 고점 (돈치안 돌파 = 신고가 추세 점화)
+  · 거래량(RVOL) ≥ SWING_RVOL_MIN   지금 수급/뉴스 유입(돌파의 진위 확인)  ← 핵심 선별
+  · EMA_FAST > EMA_SLOW             상위 추세 상방
+  손절 = 진입가 - SWING_ATR_STOP × ATR
+  청산선 = 직전 SWING_DON_EXIT일 저점 (이 아래로 일봉 종가 마감 시 매도)
+  목표 = 없음(고정 목표는 엣지를 죽임 — 추세 유지되는 한 보유)
 
-청산(EXIT_SCALP) — 보유자 기준, 아래 중 하나:
-  · VWAP 하향 이탈(직전 봉 위 → 이번 봉 아래)
-  · RSI 과열(≥80) + VWAP 대비 과열   블로우오프, 분할 익절
-  · 대량 음봉(RVOL 높음 + 종가<시가) 매도 물량 출회
+청산(EXIT_SCALP = 추세 전환) — 보유자 기준:
+  · 종가 < 직전 SWING_DON_EXIT일 저점 (채널 이탈 = 추세 꺾임)
+  (손절·시간손절은 페이퍼/백테스트 정산기가 처리)
 
 판정 우선순위: EXIT_SCALP → BUY_IGNITION → WATCH_VOL → HOLD
 """
@@ -31,10 +32,10 @@ from core import indicators as ind
 KST = timezone(timedelta(hours=9))
 
 LABELS = {
-    "BUY_IGNITION": "🟢 매수 점화 (거래량 폭발)",
-    "WATCH_VOL": "👀 관찰 (거래량 증가)",
+    "BUY_IGNITION": "📈 스윙 매수 (돌파+거래량)",
+    "WATCH_VOL": "👀 관찰 (돌파 임박)",
     "HOLD": "⚪ 관망",
-    "EXIT_SCALP": "🔴 청산 (이탈/과열)",
+    "EXIT_SCALP": "🔴 청산 (추세 전환)",
 }
 SCORES = {
     "BUY_IGNITION": 3, "WATCH_VOL": 1, "HOLD": 0, "EXIT_SCALP": -3,
@@ -43,20 +44,14 @@ BUY_SIDE = {"BUY_IGNITION"}
 SELL_SIDE = {"EXIT_SCALP"}
 WATCH_LABEL = "WATCH_VOL"
 
-
-def _kst_date(ts_ms):
-    return datetime.fromtimestamp(ts_ms / 1000, KST).date()
+HOLD_TEXT = "2~4주"
 
 
-def _kst_hour(ts_ms):
-    return datetime.fromtimestamp(ts_ms / 1000, KST).hour
-
-
-def estimate_horizon(label, target_pct):
-    """예상 보유기간(단타라 전부 초단기). 반환: (분류, 설명) 또는 None."""
+def estimate_horizon(label):
+    """예상 보유기간. 반환: (분류, 설명) 또는 None."""
     if label == "BUY_IGNITION":
-        return ("초단기 스캘핑",
-                f"수분~30분 · 목표 +{target_pct * 100:.1f}% 도달 시 분할익절, VWAP 이탈 시 손절")
+        return ("스윙 추세추종",
+                f"보통 {HOLD_TEXT} 보유 · 추세 유지되는 한 보유, 10일 저점(청산선) 이탈 시 매도")
     return None
 
 
@@ -64,146 +59,94 @@ def build_playbook(label):
     """진입/보유 후 행동 가이드. 반환: {"hold", "exit"} 또는 None."""
     if label == "BUY_IGNITION":
         return {
-            "hold": "거래량(RVOL)이 유지되고 가격이 VWAP 위에 머무는 동안만 짧게 보유",
-            "exit": "🔴 VWAP 하향 이탈 / 거래량 소멸 / RSI 80↑ 과열 / 대량 음봉 시 즉시 익절·청산",
+            "hold": "일봉 종가가 청산선(10일 저점) 위에 머무는 동안 보유 — 추세 살아있음",
+            "exit": "🔴 일봉 종가가 청산선(10일 저점) 아래 마감 / ATR 손절가 도달 시 매도",
         }
     if label == "EXIT_SCALP":
         return {
             "hold": None,
-            "exit": "보유 중이면 즉시 청산 — VWAP 이탈 또는 과열·반전(단타는 끌지 않는다)",
+            "exit": "보유 중이면 매도 — 10일 저점 종가 이탈로 추세 꺾임(스윙은 추세 끝나면 정리)",
         }
     return None
 
 
 def analyze(candles, cfg):
     """
-    candles: bithumb.get_candles() (시간 오름차순). 5분봉 권장.
+    candles: bithumb.get_candles() (시간 오름차순). 일봉 권장.
     반환: dict 또는 None(데이터 부족).
     """
-    need = max(cfg.EMA_SLOW, cfg.RVOL_PERIOD + 1,
-               cfg.BREAKOUT_LOOKBACK + 1, cfg.RSI_PERIOD + 1) + 3
+    need = max(cfg.SWING_DON_N + 1, cfg.SWING_DON_EXIT + 1,
+               cfg.SWING_ATR_PERIOD + 1, cfg.SWING_RVOL_PERIOD + 1,
+               cfg.SWING_EMA_SLOW) + 3
     if len(candles) < need:
         return None
 
-    # 마지막 봉은 형성 중(미완성)일 수 있어 제외 → 직전 '확정' 봉으로 평가
+    # 마지막 봉은 형성 중(미완성) → 직전 '확정' 일봉으로 평가
     ev = candles[:-1]
     if len(ev) < need - 1:
         return None
     cur = ev[-1]
 
     closes = [c["close"] for c in ev]
-    vols = [c["volume"] for c in ev]
     highs = [c["high"] for c in ev]
+    lows = [c["low"] for c in ev]
+    vols = [c["volume"] for c in ev]
 
     price = cur["close"]
     prev_close = closes[-2]
     change_pct = (price - prev_close) / prev_close * 100 if prev_close else 0.0
 
-    # --- RVOL (상대거래량) : 주 트리거 ---
-    rvol = ind.volume_surge(vols, cfg.RVOL_PERIOD)
+    # --- RVOL (현재 거래량 / 직전 평균) : 돌파의 진위 + 현재 수급/뉴스 ---
+    rvol = ind.volume_surge(vols, cfg.SWING_RVOL_PERIOD)
     if rvol is None:
         return None
 
-    # --- VWAP (당일 세션) ---
-    today = _kst_date(cur["ts"])
-    session = [c for c in ev if _kst_date(c["ts"]) == today]
-    vwap = ind.vwap(session)
-    prev_vwap = ind.vwap(session[:-1]) if len(session) >= 2 else None
-    ext_vwap = (price - vwap) / vwap if vwap else 0.0
-    above_vwap = vwap is not None and price > vwap
-    prev_above_vwap = (prev_vwap is not None and prev_close > prev_vwap)
-
-    # --- 단기 모멘텀 (EMA9/EMA21) ---
-    ef_s = ind.ema_series(closes, cfg.EMA_FAST)
-    es_s = ind.ema_series(closes, cfg.EMA_SLOW)
+    # --- 추세(EMA) ---
+    ef_s = ind.ema_series(closes, cfg.SWING_EMA_FAST)
+    es_s = ind.ema_series(closes, cfg.SWING_EMA_SLOW)
     ef = ef_s[-1] if ef_s else None
-    ef_prev = ef_s[-2] if len(ef_s) >= 2 else None
     es = es_s[-1] if es_s else None
-    if None in (ef, ef_prev, es):
+    if None in (ef, es):
         return None
-    momentum_up = ef > es and ef > ef_prev
+    uptrend = ef > es
 
-    # --- RSI ---
-    rsi = ind.rsi(closes, cfg.RSI_PERIOD)
-    if rsi is None:
-        return None
+    # --- ATR (손절폭) ---
+    atr = ind.atr(ev, cfg.SWING_ATR_PERIOD)
 
-    # --- 돌파(직전 N봉 고점) ---
-    window_highs = highs[-cfg.BREAKOUT_LOOKBACK - 1:-1]  # 현재 봉 제외 직전 N봉
-    breakout_high = max(window_highs) if window_highs else None
-    breakout = breakout_high is not None and price > breakout_high
+    # --- 돈치안 채널(현재 봉 제외 직전 N일) ---
+    breakout_high = max(highs[-cfg.SWING_DON_N - 1:-1])
+    exit_level = min(lows[-cfg.SWING_DON_EXIT - 1:-1])
 
-    green = price > cur["open"]
-
-    # --- 거래 집중 시간대(예 9시/21시 전후) 가중 ---
-    hour = _kst_hour(cur["ts"])
-    is_key_hour = hour in cfg.KEY_HOURS
-    trigger = max(cfg.RVOL_MIN, cfg.RVOL_TRIGGER - (cfg.KEY_HOUR_RELAX if is_key_hour else 0.0))
-
-    vol_surge = rvol >= trigger
-    rsi_ok = cfg.RSI_BUY_MIN <= rsi <= cfg.RSI_BUY_MAX
-    not_overheated = ext_vwap <= cfg.MAX_EXT_VWAP
-
-    # --- 청산 조건(보유자 기준) ---
-    lost_vwap = (vwap is not None) and (not above_vwap) and prev_above_vwap
-    blowoff = rsi >= cfg.RSI_OVERHEAT and ext_vwap >= cfg.MAX_EXT_VWAP
-    heavy_dump = (rvol >= trigger) and (not green)
+    breakout = price > breakout_high
+    vol_surge = rvol >= cfg.SWING_RVOL_MIN
+    channel_break = price < exit_level
 
     reasons = []
-    if lost_vwap or blowoff or (heavy_dump and above_vwap is False):
+    if channel_break:
         label = "EXIT_SCALP"
-        if lost_vwap:
-            reasons.append("VWAP 하향 이탈 — 당일 매수 우위 상실")
-        if blowoff:
-            reasons.append(f"RSI {rsi:.0f} 과열 + VWAP 대비 {ext_vwap * 100:+.1f}% — 블로우오프(분할 익절)")
-        if heavy_dump and not above_vwap:
-            reasons.append(f"대량 음봉(RVOL {rvol:.1f}배) — 매도 물량 출회")
-    elif (vol_surge and above_vwap and breakout and momentum_up
-          and rsi_ok and not_overheated and green):
+        reasons.append(f"일봉 종가가 {cfg.SWING_DON_EXIT}일 저점({exit_level:,.4f}) 아래 — 추세 전환, 매도")
+    elif breakout and vol_surge and uptrend:
         label = "BUY_IGNITION"
-        reasons.append(f"거래량 폭발 RVOL {rvol:.1f}배(트리거 {trigger:.1f})"
-                       + (" · 🔥거래 집중 시간대" if is_key_hour else ""))
-        reasons.append(f"VWAP 돌파 유지(가격 {ext_vwap * 100:+.1f}%) · 직전 {cfg.BREAKOUT_LOOKBACK}봉 고점 돌파")
-        reasons.append(f"EMA{cfg.EMA_FAST}>EMA{cfg.EMA_SLOW} 상승 · RSI {rsi:.0f}")
-    elif rvol >= cfg.RVOL_WATCH and above_vwap and ef > es:
+        reasons.append(f"{cfg.SWING_DON_N}일 고점 돌파(신고가) · 거래량 {rvol:.1f}배 급증 — 지금 수급/뉴스 유입")
+        reasons.append(f"EMA{cfg.SWING_EMA_FAST}>EMA{cfg.SWING_EMA_SLOW} 상승추세")
+    elif breakout and uptrend and not vol_surge:
         label = "WATCH_VOL"
-        reasons.append(f"거래량 증가 RVOL {rvol:.1f}배 · VWAP 위 — 점화 대기"
-                       + (" 🔥" if is_key_hour else ""))
-        # 왜 아직 진입이 아닌지 한 줄
-        miss = []
-        if not breakout:
-            miss.append("고점 돌파 전")
-        if not (cfg.RSI_BUY_MIN <= rsi <= cfg.RSI_BUY_MAX):
-            miss.append(f"RSI {rsi:.0f}(밴드 밖)")
-        if not not_overheated:
-            miss.append(f"VWAP 대비 {ext_vwap * 100:+.1f}% 과열")
-        if miss:
-            reasons.append("대기 사유: " + ", ".join(miss))
+        reasons.append(f"{cfg.SWING_DON_N}일 고점 돌파했으나 거래량 {rvol:.1f}배(<{cfg.SWING_RVOL_MIN:.1f}) — 거래량 확인 대기")
+    elif uptrend and price >= breakout_high * 0.97:
+        label = "WATCH_VOL"
+        reasons.append(f"{cfg.SWING_DON_N}일 고점({breakout_high:,.4f}) 근접 · 돌파 임박")
     else:
         label = "HOLD"
-        reasons.append("점화 셋업 없음")
+        reasons.append("돌파 셋업 없음")
 
-    # 매수 시 목표/손절 산정
-    target = stop = target_pct = None
+    # 매수 시 손절/청산선 산정
+    stop = None
     if label == "BUY_IGNITION":
-        target = price * (1 + cfg.TARGET_PCT)
-        target_pct = cfg.TARGET_PCT
-        # 손절 방식(우선순위): ATR 배수 > 고정% > 봉저점·VWAP(기본)
-        if getattr(cfg, "STOP_ATR_MULT", 0) > 0:
-            a = ind.atr(ev, getattr(cfg, "STOP_ATR_PERIOD", 14))
-            stop = price - cfg.STOP_ATR_MULT * a if a else cur["low"]
-        elif getattr(cfg, "STOP_PCT", 0) > 0:
-            stop = price * (1 - cfg.STOP_PCT)
-        else:
-            # 점화 봉 저점과 VWAP 중 더 가까운(높은) 쪽 — 단타라 타이트하게
-            candidates = [cur["low"]]
-            if vwap is not None:
-                candidates.append(vwap)
-            stop = max(candidates)
+        stop = price - cfg.SWING_ATR_STOP * atr if atr else exit_level
         if stop >= price:  # 안전장치
-            stop = cur["low"]
+            stop = exit_level
 
-    horizon = estimate_horizon(label, cfg.TARGET_PCT)
+    horizon = estimate_horizon(label)
     playbook = build_playbook(label)
     return {
         "label": label,
@@ -212,15 +155,17 @@ def analyze(candles, cfg):
         "price": price,
         "change_pct": change_pct,
         "rvol": rvol,
-        "vwap": vwap,
-        "ext_vwap": ext_vwap,
-        "rsi": rsi,
+        "atr": atr,
+        "breakout_high": breakout_high,
+        "don_n": cfg.SWING_DON_N,
+        "don_exit": cfg.SWING_DON_EXIT,
+        "exit_level": exit_level,          # 청산선(N일 저점) = '팔아야 하는 가격'(갱신됨)
+        "stop": stop,                      # ATR 손절가
+        "target": None,                    # 스윙은 고정 목표 없음(추세 끝까지)
+        "target_pct": None,
         "ema_fast": ef,
         "ema_slow": es,
-        "is_key_hour": is_key_hour,
-        "target": target,
-        "stop": stop,
-        "target_pct": target_pct,
+        "hold_text": HOLD_TEXT,
         "horizon": horizon,
         "playbook": playbook,
         "reasons": reasons,

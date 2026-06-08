@@ -62,14 +62,38 @@ class Config:
     # 자동 선정 시 제외할 심볼. 기본은 스테이블코인도 '포함'(빈 리스트).
     EXCLUDE = _get_list("EXCLUDE", [])
     QUOTE = _get("QUOTE", "KRW")              # 마켓 통화
-    CANDLE_INTERVAL = _get("CANDLE_INTERVAL", "5m")  # 단타 스캘핑 기본값 (5분봉)
+    CANDLE_INTERVAL = _get("CANDLE_INTERVAL", "24h")  # 스윙 기본값 (일봉)
 
     # --- 스케줄 ---
     CHECK_INTERVAL_MIN = _get_int("CHECK_INTERVAL_MIN", 5)    # 분석 주기(분) — 단타는 5분
     DAILY_SUMMARY_HOUR = _get_int("DAILY_SUMMARY_HOUR", -1)   # 일일 요약 발송 시각(KST, 0~23, -1이면 끔)
 
-    # --- 단타 스캘핑(거래량 점화 + VWAP) 파라미터 ---
-    # 단기 모멘텀 EMA (5분봉 기준)
+    # --- 일봉 스윙(돈치안 돌파 + 거래량 급증) 파라미터 [현재 운용 전략] ---
+    # 검증: scripts/backtest_swing.py — 돈치안20 돌파 + RVOL≥2.0 + 10일저점 청산이
+    # train/test 양쪽 PF 3.4~4.0(out-of-sample). 추세추종 본연의 엣지(손실 짧게·수익 길게).
+    # 단타(5분·1시간)는 수수료에 엣지가 먹혀 전부 본전~마이너스였음 → 스윙으로 전환.
+    SWING_DON_N = _get_int("SWING_DON_N", 20)           # 진입: 직전 N일 고점 돌파(돈치안)
+    SWING_DON_EXIT = _get_int("SWING_DON_EXIT", 10)     # 청산: 직전 N일 저점 이탈
+    SWING_RVOL_MIN = _get_float("SWING_RVOL_MIN", 2.0)  # 진입 거래량 급증 배수(현재 수급/뉴스)
+    SWING_RVOL_PERIOD = _get_int("SWING_RVOL_PERIOD", 20)
+    SWING_ATR_PERIOD = _get_int("SWING_ATR_PERIOD", 14)
+    SWING_ATR_STOP = _get_float("SWING_ATR_STOP", 3.0)  # 손절: 진입가 - ATR×배수
+    SWING_EMA_FAST = _get_int("SWING_EMA_FAST", 20)     # 추세 확인용
+    SWING_EMA_SLOW = _get_int("SWING_EMA_SLOW", 50)
+    SWING_MAX_HOLD_DAYS = _get_int("SWING_MAX_HOLD_DAYS", 60)  # 시간손절(일)
+
+    # --- (레거시) 단타 스캘핑 파라미터 — backtest.py 등 보조도구 호환용 ---
+    # 전략 전환 근거: 돌파추격/눌림목 순방향은 백테스트상 둘 다 PF<1(엣지 0).
+    # 유일하게 +EV가 나온 '과매도 받아치기 → VWAP 복귀 익절'로 엔진을 교체했다.
+    # (검증: scripts/backtest_meanrev.py, ~10일 표본 PF~1.2 — 단 표본 작아 페이퍼 포워드테스트 중)
+    # 받아치기 진입 필터
+    DIP_RSI_MAX = _get_float("DIP_RSI_MAX", 30.0)       # 과매도 상한(이하에서만 진입)
+    DIP_STRETCH = _get_float("DIP_STRETCH", 0.008)      # VWAP 아래로 이만큼 빠져야(0.008=-0.8%)
+    DIP_CRASH_TOL = _get_float("DIP_CRASH_TOL", 0.05)   # 종가<EMA_SLOW*(1-이값)이면 '구조붕괴'로 패스
+    DIP_LOW_LOOKBACK = _get_int("DIP_LOW_LOOKBACK", 3)  # 손절 기준 '받친 저점' 산정 봉 수
+    DIP_STOP_BUF = _get_float("DIP_STOP_BUF", 0.001)    # 받친 저점 아래 손절 버퍼
+    DIP_MIN_TARGET = _get_float("DIP_MIN_TARGET", 0.006)  # VWAP이 너무 가까울 때 최소 목표폭
+    # 단기 모멘텀 EMA (5분봉 기준) — EMA_SLOW는 구조붕괴 필터에도 사용
     EMA_FAST = _get_int("EMA_FAST", 9)
     EMA_SLOW = _get_int("EMA_SLOW", 21)
     # RVOL(상대거래량) — 주 트리거
@@ -106,8 +130,9 @@ class Config:
     # --- 페이퍼 트레이딩(가상매매 자동 기록 — 실시간 포워드 테스트) ---
     # on이면 단건 시그널 알림 대신 가상 진입/청산 + 누적 성적표를 보낸다(실돈 X).
     PAPER_TRADING = _get("PAPER_TRADING", "true").lower() == "true"
-    PAPER_FEE = _get_float("PAPER_FEE", 0.001)            # 왕복 수수료 가정(0.1%)
-    PAPER_MAX_HOLD_BARS = _get_int("PAPER_MAX_HOLD_BARS", 24)  # 시간손절(봉, 24=2시간)
+    PAPER_FEE = _get_float("PAPER_FEE", 0.0008)           # 왕복 수수료 가정(빗썸 쿠폰 0.04%×2)
+    PAPER_MAX_HOLD_DAYS = _get_int("PAPER_MAX_HOLD_DAYS", 60)  # 시간손절(일) — 스윙
+    PAPER_MAX_HOLD_BARS = _get_int("PAPER_MAX_HOLD_BARS", 24)  # (레거시) 단타 시간손절(봉)
     PAPER_SUMMARY_HOUR = _get_int("PAPER_SUMMARY_HOUR", 9)     # 페이퍼 일일요약 발송 시각(KST, -1이면 끔)
 
     # 매수계열(EARLY_BUY/CONFIRMED_BUY) + 매도계열(EARLY_SELL/EXIT)만 알림. HOLD 무시.

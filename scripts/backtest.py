@@ -75,10 +75,10 @@ def simulate_symbol(sym, cfg, candles):
             break
         entry = candles[entry_idx]["open"] * (1 + SLIP)
         stop = sig.get("stop")
-        if stop is None or stop >= entry:
+        target = sig.get("target")            # 엔진이 산정한 목표(VWAP 복귀 등) 그대로 사용
+        if stop is None or stop >= entry or target is None or target <= entry:
             i += 1
             continue
-        target = entry * (1 + cfg.TARGET_PCT)
         entry_day = _kst_date(candles[entry_idx]["ts"])
 
         exit_price = exit_idx = reason = None

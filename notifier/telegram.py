@@ -101,8 +101,8 @@ def build_signal_message(symbol, sig, interval):
 
 
 _PAPER_REASON = {
-    "target": "🎯 목표 달성", "stop": "🛑 손절", "engine_exit": "엔진 청산(VWAP이탈/과열)",
-    "eod": "당일 마감", "time": "시간 손절",
+    "target": "🎯 목표 달성", "stop": "🛑 손절", "engine_exit": "추세 전환",
+    "eod": "당일 마감", "time": "시간 손절(최대 보유)",
 }
 
 
@@ -112,41 +112,57 @@ def _scorecard_line(sc):
             f"기대값 {sc['exp']:+.2f}% · PF {pf} · 누적 {sc['total']:+.1f}%")
 
 
+def _pct_from(price, level):
+    """level이 price 대비 몇 % 인지 (+/-)."""
+    if not price or level is None:
+        return None
+    return (level - price) / price * 100
+
+
 def build_paper_entry(ev, interval):
-    """페이퍼(가상) 진입 기록 메시지 — 스캘핑 핵심: 자산·최대 구매 금액·청산 시각."""
+    """페이퍼(가상) 스윙 진입 메시지 — 진입가·손절·청산선·예상 보유."""
     sym, sig = ev["sym"], ev["sig"]
+    don_n = sig.get("don_n", 20)
+    don_exit = sig.get("don_exit", 10)
     lines = [
-        f"📗 <b>[페이퍼] 가상 진입</b>  💎 <b>{_esc(sym)}</b> <code>/KRW</code>",
-        f"진입가 {_fmt_price(sig['price'])}  ({interval}봉) · RVOL {sig.get('rvol', 0):.1f}배 · RSI {sig.get('rsi', 0):.0f}",
+        f"📈 <b>[페이퍼] 스윙 매수</b>  💎 <b>{_esc(sym)}</b> <code>/KRW</code>",
+        f"🔥 거래량 <b>{sig.get('rvol', 0):.1f}배</b> 급증 + {don_n}일 고점 돌파 "
+        f"<i>(지금 수급/뉴스 유입)</i>",
+        f"진입가 ≈ <b>{_fmt_price(sig['price'])}</b>  ({interval}봉)",
     ]
     # 최대 구매 금액(호가 유동성 기반)
     mb = sig.get("max_buy_krw")
     if mb is not None:
         warn = " ⚠️호가 얇음·소액만" if sig.get("thin_book") else ""
         lines.append(f"💰 <b>최대 구매 금액 ≈ {_fmt_amount(mb)}</b>{warn}")
-    # 목표/손절
-    if sig.get("target") is not None:
-        tp = sig.get("target_pct") or 0
-        lines.append(f"🎯 목표 {_fmt_price(sig['target'])} (+{tp * 100:.1f}%)  "
-                     f"🛑 손절 {_fmt_price(sig['stop'])}")
-    # 몇 분 뒤 Exit — 목표 도달 시 즉시, 미도달 시 시간손절 클락
-    mm, clock = ev.get("max_min"), ev.get("exit_clock")
-    if mm:
-        tail = f" → 미도달 시 <b>{mm}분 뒤({clock}) 청산</b>" if clock else f" → 최대 {mm}분 보유"
-        lines.append(f"⏱ <b>Exit</b>: 목표/손절 도달 시 즉시{tail}")
+    # 손절(ATR)
+    if sig.get("stop") is not None:
+        sp = _pct_from(sig["price"], sig["stop"])
+        lines.append(f"🛑 손절 <b>{_fmt_price(sig['stop'])}</b> ({sp:+.1f}%, ATR)")
+    # 청산선(N일 저점) = 팔아야 하는 가격
+    if sig.get("exit_level") is not None:
+        ep = _pct_from(sig["price"], sig["exit_level"])
+        lines.append(f"🚪 청산선 <b>{_fmt_price(sig['exit_level'])}</b> ({ep:+.1f}%) "
+                     f"= 최근 {don_exit}일 저점 — <i>일봉 종가가 이 아래면 매도</i>")
+    # 예상 보유
+    lines.append(f"⏳ 예상 보유 <b>{_esc(sig.get('hold_text', '2~4주'))}</b> (추세 유지되는 한)")
+    lines.append("📊 추세추종 — 손실 짧게·수익 길게. 신호 적음(뜨면 신뢰도↑)")
     lines.append("<i>ℹ️ 정보용 가상 매매 기록 — 실제 주문이 아닙니다.</i>")
     return "\n".join(lines)
 
 
 def build_paper_exit(ev):
-    """페이퍼(가상) 청산 기록 메시지 + 누적 성적표."""
+    """페이퍼(가상) 스윙 청산 메시지 + 누적 성적표."""
     sym, net = ev["sym"], ev["net"]
     mark = "🟢" if net > 0 else "🔴"
-    hold = ev.get("hold_min")
-    hold_txt = f" · 보유 {hold}분" if hold else ""
+    days = ev.get("days")
+    hold_txt = f" · 보유 {days}일" if days else ""
+    reason = _PAPER_REASON.get(ev["reason"], ev["reason"])
+    if ev["reason"] == "engine_exit" and ev.get("exit_level") is not None:
+        reason += f" — 청산선 {_fmt_price(ev['exit_level'])} 이탈"
     lines = [
-        f"📕 <b>[페이퍼] 가상 청산</b>  💎 <b>{_esc(sym)}</b> <code>/KRW</code>  {mark}",
-        f"사유 {_PAPER_REASON.get(ev['reason'], ev['reason'])} · 손익 <b>{net * 100:+.2f}%</b> (수수료 반영){hold_txt}",
+        f"📕 <b>[페이퍼] 스윙 청산</b>  💎 <b>{_esc(sym)}</b> <code>/KRW</code>  {mark}",
+        f"사유 {reason} · 손익 <b>{net * 100:+.2f}%</b> (수수료 반영){hold_txt}",
         f"진입 {_esc(ev['in'])} → 청산 {_esc(ev['out'])}",
         _scorecard_line(ev["scorecard"]),
     ]

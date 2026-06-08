@@ -1,9 +1,11 @@
 name: trading-signal
 
-# 단타 스캘핑: 5분마다 1회 분석 실행.
-# 스케줄은 외부 트리거(cron-job.org)가 5분 간격으로 workflow_dispatch 로 호출한다.
-# → cron-job.org 작업 스케줄을 "*/5 * * * *"(매 5분)로 설정할 것.
-# → GitHub 자체 schedule 이벤트(지연/누락 잦음) 대신 사용. 둘 다 켜면 중복 발송되므로 schedule 은 끔.
+# 일봉 스윙: 하루 1회 분석이면 충분(확정 일봉은 하루 한 번만 바뀜).
+# 스케줄은 외부 트리거(cron-job.org)가 workflow_dispatch 로 호출한다.
+# → cron-job.org 를 매일 1회(예: 09:00 KST = "0 0 * * *" UTC)로 설정 권장.
+#   (자주 호출해도 페이퍼 로직이 멱등이라 중복은 없지만 Actions 분/API 낭비.)
+# → 페이퍼 일일요약(PAPER_SUMMARY_HOUR=9, KST)을 받으려면 09시대 실행이 1회는 있어야 함.
+# → GitHub 자체 schedule 이벤트(지연/누락 잦음) 대신 외부 트리거 사용.
 on:
   workflow_dispatch:            # 외부 트리거(cron-job.org) + 수동 실행 버튼
     inputs:
@@ -41,13 +43,13 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           ONESHOT: "true"
-          CANDLE_INTERVAL: "5m"      # 단타 스캘핑: 거래량 점화 + VWAP (5분봉)
+          CANDLE_INTERVAL: "24h"     # 일봉 스윙: 돈치안 돌파 + 거래량 급증
           TOP_N: "20"                # 24H 거래대금 상위 20개
           PAPER_TRADING: "true"      # 정보용 가상매매 기록(실시간 포워드테스트) — 실돈 X
           HOURLY_STATUS: "false"     # 단건 이벤트 기반(페이퍼 진입/청산)
           ALERT_MODE: "on_change"
-          DAILY_SUMMARY_HOUR: "-1"   # 별도 일일 요약 끔
-          # ALERT_ON_WATCH: "true"   # '점화 대기(관찰)'까지 받으려면 주석 해제
+          DAILY_SUMMARY_HOUR: "-1"   # 별도 일일 요약 끔(페이퍼 요약은 PAPER_SUMMARY_HOUR 사용)
+          # ALERT_ON_WATCH: "true"   # '돌파 임박(관찰)'까지 받으려면 주석 해제
         run: python main.py
 
       - name: Telegram 발송 테스트 (수동 test_alert=true 일 때만)
