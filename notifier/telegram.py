@@ -209,9 +209,14 @@ def build_paper_summary(pap, now_str, interval):
     fn = pap.get("funnel")
     if fn:
         don_n = fn.get("don_n", 20)
+        skip_bits = []
+        if fn.get("skipped_short"):
+            skip_bits.append(f"숏히스토리 {fn['skipped_short']}")
+        if fn.get("lowliq"):
+            skip_bits.append(f"저유동성 {fn['lowliq']}")
         lines.append(
             f"<b>■ 셋업 현황</b>  분석 {fn.get('analyzed', 0)}종목"
-            + (f" · 숏히스토리 스킵 {fn['skipped_short']}" if fn.get("skipped_short") else ""))
+            + (f" · 스킵({' / '.join(skip_bits)})" if skip_bits else ""))
         lines.append(
             f"   {don_n}일 돌파 {fn.get('breakout', 0)} · "
             f"거래량≥{fn.get('rvol_min', 2.0):.1f}배 {fn.get('vol', 0)} · "

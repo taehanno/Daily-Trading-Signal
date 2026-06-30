@@ -24,6 +24,7 @@ from config import Config
 from exchanges import bithumb
 from core import signal as sig_engine
 from core import paper as paper_engine
+from core import indicators as ind
 from notifier import telegram
 
 KST = timezone(timedelta(hours=9))
@@ -85,7 +86,7 @@ def attach_liquidity(cfg, sym, sig):
 
 
 # ---------- 셋업 깔때기(funnel) 집계 — '왜 진입이 없는지' 가시화 ----------
-def _record_funnel(cfg, state, results, n_skipped, now_str):
+def _record_funnel(cfg, state, results, n_skipped, n_lowliq, now_str):
     """이번 사이클의 필터 통과 현황을 state["paper"]["funnel"]에 기록.
     일일 요약에서 '돌파 0/거래량 N/정배열 M → 진입 K'로 보여줘 신호 가뭄 원인을 설명한다."""
     n_breakout = n_vol = n_ema = n_buy = n_watch = 0
@@ -111,6 +112,7 @@ def _record_funnel(cfg, state, results, n_skipped, now_str):
     pap = state.setdefault("paper", {})
     pap["funnel"] = {
         "ts": now_str, "analyzed": len(results), "skipped_short": n_skipped,
+        "lowliq": n_lowliq,
         "breakout": n_breakout, "vol": n_vol, "ema": n_ema,
         "buy": n_buy, "watch": n_watch,
         "nearest_gap": nearest_gap, "nearest_sym": nearest_sym,
@@ -126,10 +128,18 @@ def run_cycle(cfg, state):
 
     results = []
     market = {}   # {sym: {"bar": <eval 봉>, "label": str}} — 페이퍼 청산 점검용
-    n_skipped = 0  # 이력 짧아(신규상장) 분석 불가로 건너뛴 종목 수
+    n_skipped = 0   # 이력 짧아(신규상장) 분석 불가로 건너뛴 종목 수
+    n_lowliq = 0    # 거래대금 중앙값 미달(펌프성 잡코인)로 제외한 종목 수
     for sym in candidates:
         try:
             candles = bithumb.get_candles(sym, cfg.QUOTE, cfg.CANDLE_INTERVAL)
+            # 유니버스 품질 게이트: 펌프성 잡코인(거래대금 중앙값 낮음) 제외 (보유 종목 청산엔 영향 X)
+            if cfg.SWING_MIN_TURNOVER_KRW > 0 and len(candles) > 1:
+                mt = ind.median_turnover(candles[:-1], cfg.SWING_TURNOVER_DAYS)
+                if mt < cfg.SWING_MIN_TURNOVER_KRW:
+                    n_lowliq += 1
+                    bithumb.polite_sleep(cfg.REQUEST_SLEEP)
+                    continue
             sig = sig_engine.analyze(candles, cfg)
             if sig:
                 # 매수 시그널이면 호가창 유동성으로 '권장 최대 매수금액' 산정
@@ -147,7 +157,7 @@ def run_cycle(cfg, state):
         bithumb.polite_sleep(cfg.REQUEST_SLEEP)
 
     results.sort(key=lambda x: x[1]["score"], reverse=True)
-    _record_funnel(cfg, state, results, n_skipped,
+    _record_funnel(cfg, state, results, n_skipped, n_lowliq,
                    datetime.now(KST).strftime("%Y-%m-%d %H:%M"))
 
     now = datetime.now(KST)

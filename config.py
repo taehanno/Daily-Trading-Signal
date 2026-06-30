@@ -78,13 +78,21 @@ class Config:
     # 단타(5분·1시간)는 수수료에 엣지가 먹혀 전부 본전~마이너스였음 → 스윙으로 전환.
     SWING_DON_N = _get_int("SWING_DON_N", 20)           # 진입: 직전 N일 고점 돌파(돈치안)
     SWING_DON_EXIT = _get_int("SWING_DON_EXIT", 10)     # 청산: 직전 N일 저점 이탈
-    SWING_RVOL_MIN = _get_float("SWING_RVOL_MIN", 2.0)  # 진입 거래량 급증 배수(현재 수급/뉴스)
+    # 진입 거래량 급증 배수. 백테스트(backtest_swing.py BT_VOL=1): 돌파에서 RVOL≥1.5가
+    # 거래 80% 유지하며 수익 102% 유지(PF 3.41) — 2.0(68%/92%)보다 신호 多·수익 同.
+    SWING_RVOL_MIN = _get_float("SWING_RVOL_MIN", 1.5)
     SWING_RVOL_PERIOD = _get_int("SWING_RVOL_PERIOD", 20)
     SWING_ATR_PERIOD = _get_int("SWING_ATR_PERIOD", 14)
     SWING_ATR_STOP = _get_float("SWING_ATR_STOP", 3.0)  # 손절: 진입가 - ATR×배수
     SWING_EMA_FAST = _get_int("SWING_EMA_FAST", 20)     # 추세 확인용
     SWING_EMA_SLOW = _get_int("SWING_EMA_SLOW", 50)
     SWING_MAX_HOLD_DAYS = _get_int("SWING_MAX_HOLD_DAYS", 60)  # 시간손절(일)
+    # --- 유니버스 품질 필터 (펌프성 잡코인 배제) ---
+    # 거래대금 상위 랭킹은 가끔 펌프로 잠깐 끼는 잡코인을 끌어옴(예: G·MANTA, 백테스트 PF<0.3,
+    # -17%~-27% 거짓돌파 손절만 반복). 최근 N일 거래대금 '중앙값'이 이 값 미만이면 분석 제외.
+    # 검증: 패자(G·MANTA)는 중앙값 ~0.5억, 흑자 메이저는 20억↑ — 10억이면 승자 보존·패자 차단.
+    SWING_MIN_TURNOVER_KRW = _get_float("SWING_MIN_TURNOVER_KRW", 1_000_000_000)  # 10억
+    SWING_TURNOVER_DAYS = _get_int("SWING_TURNOVER_DAYS", 30)
 
     # --- (레거시) 단타 스캘핑 파라미터 — backtest.py 등 보조도구 호환용 ---
     # 전략 전환 근거: 돌파추격/눌림목 순방향은 백테스트상 둘 다 PF<1(엣지 0).

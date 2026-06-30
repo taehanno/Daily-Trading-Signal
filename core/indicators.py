@@ -102,6 +102,20 @@ def volume_surge(volumes, period=20):
     return volumes[-1] / avg
 
 
+def median_turnover(candles, days=30):
+    """최근 days봉의 대표 거래대금(close×volume, KRW)의 중앙값.
+    펌프성 잡코인(평소 거의 안 거래되다 가끔 거래량만 터져 거래대금 상위에 잠깐 끼는)을
+    걸러내는 유니버스 품질 지표. 검증(scripts/backtest_swing.py per-symbol): 백테스트
+    PF<1 패자(G·MANTA)는 중앙값 ~0.5억, 흑자 메이저는 20억~900억으로 명확히 갈림.
+    데이터 없으면 0."""
+    rows = candles[-days:] if candles else []
+    tos = sorted(c["close"] * c["volume"] for c in rows)
+    if not tos:
+        return 0.0
+    m = len(tos) // 2
+    return tos[m] if len(tos) % 2 else (tos[m - 1] + tos[m]) / 2
+
+
 def vwap(candles):
     """
     거래량가중평균가(VWAP). candles: [{high, low, close, volume}, ...].
