@@ -53,12 +53,14 @@ def save_state(path, state):
 
 # ---------- 대상 코인 선정 ----------
 def resolve_targets(cfg):
+    """분석 후보 풀을 반환. 자동 선정 시 TOP_N×CANDIDATE_MULT개를 넉넉히 받아
+    run_cycle 에서 '분석 가능한' 종목이 TOP_N개 찰 때까지 훑는다(이력 짧은 신규코인 skip)."""
     if cfg.COINS:
         return cfg.COINS  # 사용자가 명시한 코인은 그대로 존중
     try:
-        # 제외 코인을 감안해 넉넉히 받은 뒤 필터 → 상위 TOP_N
-        raw = bithumb.top_symbols_by_volume(cfg.QUOTE, cfg.TOP_N + len(cfg.EXCLUDE))
-        return [s for s in raw if s not in cfg.EXCLUDE][:cfg.TOP_N]
+        pool = (cfg.TOP_N + len(cfg.EXCLUDE)) * cfg.CANDIDATE_MULT
+        raw = bithumb.top_symbols_by_volume(cfg.QUOTE, pool)
+        return [s for s in raw if s not in cfg.EXCLUDE][:pool]
     except bithumb.BithumbError as e:
         print(f"[targets] 상위 코인 조회 실패: {e}")
         return []
@@ -82,14 +84,50 @@ def attach_liquidity(cfg, sym, sig):
     sig["thin_book"] = sig["max_buy_krw"] < cfg.THIN_BOOK_KRW   # 호가 얇음 경고
 
 
+# ---------- 셋업 깔때기(funnel) 집계 — '왜 진입이 없는지' 가시화 ----------
+def _record_funnel(cfg, state, results, n_skipped, now_str):
+    """이번 사이클의 필터 통과 현황을 state["paper"]["funnel"]에 기록.
+    일일 요약에서 '돌파 0/거래량 N/정배열 M → 진입 K'로 보여줘 신호 가뭄 원인을 설명한다."""
+    n_breakout = n_vol = n_ema = n_buy = n_watch = 0
+    nearest_gap, nearest_sym = None, None
+    for sym, sig in results:
+        bh = sig.get("breakout_high")
+        price = sig.get("price")
+        if bh and price:
+            gap = (price / bh - 1) * 100  # +면 돌파, -면 고점까지 남은 거리(%)
+            if nearest_gap is None or gap > nearest_gap:
+                nearest_gap, nearest_sym = gap, sym
+            if price > bh:
+                n_breakout += 1
+        if (sig.get("rvol") or 0) >= cfg.SWING_RVOL_MIN:
+            n_vol += 1
+        if sig.get("ema_fast") is not None and sig.get("ema_slow") is not None \
+                and sig["ema_fast"] > sig["ema_slow"]:
+            n_ema += 1
+        if sig["label"] == "BUY_IGNITION":
+            n_buy += 1
+        elif sig["label"] == sig_engine.WATCH_LABEL:
+            n_watch += 1
+    pap = state.setdefault("paper", {})
+    pap["funnel"] = {
+        "ts": now_str, "analyzed": len(results), "skipped_short": n_skipped,
+        "breakout": n_breakout, "vol": n_vol, "ema": n_ema,
+        "buy": n_buy, "watch": n_watch,
+        "nearest_gap": nearest_gap, "nearest_sym": nearest_sym,
+        "rvol_min": cfg.SWING_RVOL_MIN, "don_n": cfg.SWING_DON_N,
+    }
+
+
 # ---------- 1회 분석 사이클 ----------
 def run_cycle(cfg, state):
-    targets = resolve_targets(cfg)
-    print(f"[{datetime.now(KST):%Y-%m-%d %H:%M}] 분석 대상 {len(targets)}개: {', '.join(targets)}")
+    candidates = resolve_targets(cfg)
+    want = len(candidates) if cfg.COINS else cfg.TOP_N  # 명시 코인은 전부, 자동이면 TOP_N개 채움
+    print(f"[{datetime.now(KST):%Y-%m-%d %H:%M}] 후보 {len(candidates)}개 중 분석가능 {want}개 목표")
 
     results = []
     market = {}   # {sym: {"bar": <eval 봉>, "label": str}} — 페이퍼 청산 점검용
-    for sym in targets:
+    n_skipped = 0  # 이력 짧아(신규상장) 분석 불가로 건너뛴 종목 수
+    for sym in candidates:
         try:
             candles = bithumb.get_candles(sym, cfg.QUOTE, cfg.CANDLE_INTERVAL)
             sig = sig_engine.analyze(candles, cfg)
@@ -100,11 +138,17 @@ def run_cycle(cfg, state):
                 results.append((sym, sig))
                 if len(candles) >= 2:
                     market[sym] = {"bar": candles[-2], "label": sig["label"]}
+                if len(results) >= want:  # 분석 가능한 종목을 목표만큼 채웠으면 종료
+                    break
+            else:
+                n_skipped += 1  # 일봉 이력 부족(EMA50 등) — 풀이 새지 않게 다음 후보로
         except bithumb.BithumbError as e:
             print(f"  - {sym} 조회 실패: {e}")
         bithumb.polite_sleep(cfg.REQUEST_SLEEP)
 
     results.sort(key=lambda x: x[1]["score"], reverse=True)
+    _record_funnel(cfg, state, results, n_skipped,
+                   datetime.now(KST).strftime("%Y-%m-%d %H:%M"))
 
     now = datetime.now(KST)
     now_str = now.strftime("%Y-%m-%d %H:%M")

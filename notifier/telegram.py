@@ -205,6 +205,23 @@ def build_paper_summary(pap, now_str, interval):
                          f"({_esc(p.get('entry_ts', ''))}) · 최대 {mb}")
     else:
         lines.append("<b>■ 보유 중</b>  없음")
+    # 셋업 깔때기 — 진입이 없을 때 '왜 flat인지' 설명(돌파장이 아니면 신호 0이 정상)
+    fn = pap.get("funnel")
+    if fn:
+        don_n = fn.get("don_n", 20)
+        lines.append(
+            f"<b>■ 셋업 현황</b>  분석 {fn.get('analyzed', 0)}종목"
+            + (f" · 숏히스토리 스킵 {fn['skipped_short']}" if fn.get("skipped_short") else ""))
+        lines.append(
+            f"   {don_n}일 돌파 {fn.get('breakout', 0)} · "
+            f"거래량≥{fn.get('rvol_min', 2.0):.1f}배 {fn.get('vol', 0)} · "
+            f"정배열 {fn.get('ema', 0)} → 진입 {fn.get('buy', 0)} · 관찰 {fn.get('watch', 0)}")
+        ng, ns = fn.get("nearest_gap"), fn.get("nearest_sym")
+        if ng is not None and ns:
+            tag = "돌파" if ng >= 0 else "고점까지"
+            lines.append(f"   최근접: <code>{_esc(ns)}</code> {ng:+.1f}% ({tag})")
+        if fn.get("buy", 0) == 0 and fn.get("breakout", 0) == 0:
+            lines.append("   <i>↳ 신고가 돌파 종목이 없어 대기 — 돌파장이 아니면 진입 0이 정상</i>")
     lines.append("")
     lines.append("<i>ℹ️ 정보용 가상 매매 누적 기록 — 실제 주문이 아닙니다.</i>")
     return "\n".join(lines)

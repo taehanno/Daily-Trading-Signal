@@ -59,6 +59,10 @@ class Config:
     # COINS 를 지정하면 해당 심볼만, 비우면 24H 거래대금 상위 TOP_N 자동 선정
     COINS = _get_list("COINS", [])
     TOP_N = _get_int("TOP_N", 20)
+    # 거래대금 상위 후보를 TOP_N×이 배수만큼 넉넉히 받아, 일봉 이력이 짧아(신규상장)
+    # 분석 불가한 종목을 건너뛰고 '실제 분석 가능한' 종목을 TOP_N개 채운다.
+    # (신규 핫코인이 거래대금 상위를 먹으면 EMA50(봉 53개)을 못 채워 풀이 줄어드는 문제 방지)
+    CANDIDATE_MULT = _get_int("CANDIDATE_MULT", 3)
     # 자동 선정 시 제외할 심볼. 기본은 스테이블코인도 '포함'(빈 리스트).
     EXCLUDE = _get_list("EXCLUDE", [])
     QUOTE = _get("QUOTE", "KRW")              # 마켓 통화
