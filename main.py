@@ -221,18 +221,25 @@ def run_cycle(cfg, state):
 
 # ---------- 페이퍼 일일 요약 ----------
 def maybe_send_paper_summary(cfg, state, now):
-    """PAPER_SUMMARY_HOUR(KST)에 하루 한 번 페이퍼 누적 성적표 발송."""
-    if not cfg.PAPER_TRADING or cfg.PAPER_SUMMARY_HOUR < 0:
+    """PAPER_SUMMARY_HOUR(KST)에 하루 한 번 페이퍼 누적 성적표 발송.
+    PAPER_SUMMARY_FORCE=true 면 시각/중복 무관하게 즉시 1건 발송(수동 검증용,
+    이 경우 last_summary_date를 소비하지 않아 정규 요약은 별도로 그대로 발송됨)."""
+    if not cfg.PAPER_TRADING:
+        return
+    force = os.environ.get("PAPER_SUMMARY_FORCE", "").lower() == "true"
+    if not force and cfg.PAPER_SUMMARY_HOUR < 0:
         return
     pap = state.get("paper")
     if not pap:
         return
     today = now.strftime("%Y-%m-%d")
-    if now.hour == cfg.PAPER_SUMMARY_HOUR and pap.get("last_summary_date") != today:
+    due = now.hour == cfg.PAPER_SUMMARY_HOUR and pap.get("last_summary_date") != today
+    if force or due:
         msg = telegram.build_paper_summary(pap, now.strftime("%Y-%m-%d %H:%M"), cfg.CANDLE_INTERVAL)
         if telegram.send(cfg, msg):
-            pap["last_summary_date"] = today
-            print("  → 페이퍼 일일 요약 발송")
+            if not force:
+                pap["last_summary_date"] = today
+            print("  → 페이퍼 일일 요약 발송" + (" (강제)" if force else ""))
 
 
 # ---------- 일일 요약 ----------

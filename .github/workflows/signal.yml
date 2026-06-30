@@ -13,6 +13,10 @@ on:
         description: "합성 알림으로 텔레그램 발송 테스트(시장 무관 1건 강제 발송)"
         type: boolean
         default: false
+      force_summary:
+        description: "페이퍼 일일요약을 시각 무관 즉시 강제 발송(수동 검증용)"
+        type: boolean
+        default: false
   # schedule:                   # (비활성) GitHub 네이티브 크론 — 5분 간격은 지연이 커서 비권장
   #   - cron: "*/5 * * * *"
 
@@ -49,6 +53,7 @@ jobs:
           HOURLY_STATUS: "false"     # 단건 이벤트 기반(페이퍼 진입/청산)
           ALERT_MODE: "on_change"
           DAILY_SUMMARY_HOUR: "-1"   # 별도 일일 요약 끔(페이퍼 요약은 PAPER_SUMMARY_HOUR 사용)
+          PAPER_SUMMARY_FORCE: ${{ github.event.inputs.force_summary }}  # true면 즉시 강제 발송
           # ALERT_ON_WATCH: "true"   # '돌파 임박(관찰)'까지 받으려면 주석 해제
         run: python main.py
 
