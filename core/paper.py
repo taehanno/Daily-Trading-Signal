@@ -117,6 +117,11 @@ def update(cfg, state, sigs_by_sym, market, now_str):
         else:
             bar, label = m["bar"], m["label"]
 
+        # 진입한 '바로 그 확정봉'에서는 청산 판정을 하지 않는다.
+        # (일봉 신호인데 봇은 매시간 돌므로, 같은 확정봉에서 진입→즉시손절→재진입이
+        #  무한 반복돼 한 거래가 수십 번 중복 기록되던 버그 차단. 청산은 다음 봉부터.)
+        if pos.get("entry_bar_ts") is not None and bar["ts"] == pos["entry_bar_ts"]:
+            continue
         days_held = _days_held(pos.get("entry_date"), bar["ts"])
         ex = _exit_check(cfg, pos, bar, label, days_held)
         if ex:
@@ -142,6 +147,7 @@ def update(cfg, state, sigs_by_sym, market, now_str):
         open_pos[sym] = {
             "entry": sig["price"], "entry_ts": now_str,
             "entry_date": _kst_date_str(bar["ts"]) if bar else now_str.split(" ")[0],
+            "entry_bar_ts": bar["ts"] if bar else None,  # 같은 확정봉 재진입 루프 방지용
             "stop": sig["stop"], "target": sig.get("target"),
             "exit_level": sig.get("exit_level"), "rvol": sig.get("rvol"),
             "max_buy_krw": sig.get("max_buy_krw"), "hold_text": sig.get("hold_text"),
