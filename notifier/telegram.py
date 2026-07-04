@@ -122,11 +122,12 @@ def _pct_from(price, level):
 def build_paper_entry(ev, interval):
     """페이퍼(가상) 스윙 진입 메시지 — 진입가·손절·청산선·예상 보유."""
     sym, sig = ev["sym"], ev["sig"]
-    don_n = sig.get("don_n", 20)
-    don_exit = sig.get("don_exit", 10)
+    don_txt = sig.get("don_n_txt") or f"{sig.get('don_n', 20)}일"
+    exit_txt = sig.get("don_exit_txt") or f"{sig.get('don_exit', 10)}일"
+    bar_txt = sig.get("bar_txt", "일봉")
     lines = [
         f"📈 <b>[페이퍼] 스윙 매수</b>  💎 <b>{_esc(sym)}</b> <code>/KRW</code>",
-        f"🔥 거래량 <b>{sig.get('rvol', 0):.1f}배</b> 급증 + {don_n}일 고점 돌파 "
+        f"🔥 거래량 <b>{sig.get('rvol', 0):.1f}배</b> 급증 + {don_txt} 고점 돌파 "
         f"<i>(지금 수급/뉴스 유입)</i>",
         f"진입가 ≈ <b>{_fmt_price(sig['price'])}</b>  ({interval}봉)",
     ]
@@ -143,7 +144,7 @@ def build_paper_entry(ev, interval):
     if sig.get("exit_level") is not None:
         ep = _pct_from(sig["price"], sig["exit_level"])
         lines.append(f"🚪 청산선 <b>{_fmt_price(sig['exit_level'])}</b> ({ep:+.1f}%) "
-                     f"= 최근 {don_exit}일 저점 — <i>일봉 종가가 이 아래면 매도</i>")
+                     f"= 최근 {exit_txt} 저점 — <i>{bar_txt} 종가가 이 아래면 매도</i>")
     # 예상 보유
     lines.append(f"⏳ 예상 보유 <b>{_esc(sig.get('hold_text', '2~4주'))}</b> (추세 유지되는 한)")
     lines.append("📊 추세추종 — 손실 짧게·수익 길게. 신호 적음(뜨면 신뢰도↑)")
@@ -208,7 +209,8 @@ def build_paper_summary(pap, now_str, interval):
     # 셋업 깔때기 — 진입이 없을 때 '왜 flat인지' 설명(돌파장이 아니면 신호 0이 정상)
     fn = pap.get("funnel")
     if fn:
-        don_n = fn.get("don_n", 20)
+        from core.signal import bars_days_txt
+        don_txt = bars_days_txt(fn.get("don_n", 20), interval)
         skip_bits = []
         if fn.get("skipped_short"):
             skip_bits.append(f"숏히스토리 {fn['skipped_short']}")
@@ -218,7 +220,7 @@ def build_paper_summary(pap, now_str, interval):
             f"<b>■ 셋업 현황</b>  분석 {fn.get('analyzed', 0)}종목"
             + (f" · 스킵({' / '.join(skip_bits)})" if skip_bits else ""))
         lines.append(
-            f"   {don_n}일 돌파 {fn.get('breakout', 0)} · "
+            f"   {don_txt} 돌파 {fn.get('breakout', 0)} · "
             f"거래량≥{fn.get('rvol_min', 2.0):.1f}배 {fn.get('vol', 0)} · "
             f"정배열 {fn.get('ema', 0)} → 진입 {fn.get('buy', 0)} · 관찰 {fn.get('watch', 0)}")
         ng, ns = fn.get("nearest_gap"), fn.get("nearest_sym")
