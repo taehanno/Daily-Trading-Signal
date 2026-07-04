@@ -164,6 +164,7 @@ def build_paper_exit(ev):
     lines = [
         f"📕 <b>[페이퍼] 스윙 청산</b>  💎 <b>{_esc(sym)}</b> <code>/KRW</code>  {mark}",
         f"사유 {reason} · 손익 <b>{net * 100:+.2f}%</b> (수수료 반영){hold_txt}",
+        f"💸 매도가 <b>{_fmt_price(ev.get('exit'))}</b> ← 진입가 {_fmt_price(ev.get('entry'))}",
         f"진입 {_esc(ev['in'])} → 청산 {_esc(ev['out'])}",
         _scorecard_line(ev["scorecard"]),
     ]
